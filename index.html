@@ -935,7 +935,55 @@ function parseReceiptText(text){
     if(amts.length) amount = Math.max(...amts);
   }
 
+  storeName = cleanStoreName(storeName);
   return { storeName, date, amount: amount||null };
+}
+
+// ── CLEAN STORE NAME ──
+// Match against known brands first; otherwise strip store #s and generic suffixes.
+const KNOWN_BRANDS = [
+  'Walmart','Target','Costco',"Sam's Club",'Kroger','Publix','Whole Foods',
+  'Trader Joe\'s','Aldi','Safeway','Winn-Dixie','Food Lion','H-E-B','HEB',
+  'Albertsons','Meijer','Giant','Wegmans','Stop & Shop','Sprouts',
+  'CVS','Walgreens','Rite Aid',
+  'McDonald\'s','Burger King','Wendy\'s','Taco Bell','Chick-fil-A','Subway',
+  'Starbucks','Dunkin','Chipotle','KFC','Popeyes','Pizza Hut','Domino\'s',
+  'Panera','IHOP','Denny\'s','Applebee\'s','Olive Garden','Outback',
+  'Panda Express','Five Guys','Wingstop','Raising Cane\'s','Shake Shack',
+  'Shell','Exxon','Chevron','BP','Mobil','Sunoco','Marathon','Citgo',
+  'Circle K','Wawa','RaceTrac','Speedway','Murphy','7-Eleven','QuikTrip',
+  'Amazon','eBay','Best Buy','Home Depot','Lowe\'s','Lowes','IKEA',
+  'Dollar Tree','Dollar General','Family Dollar','Five Below','Big Lots',
+  'Marshalls','TJ Maxx','Ross','Burlington','Nordstrom','Macy\'s',
+  'Kohl\'s','Gap','Old Navy','Banana Republic','H&M','Zara','Forever 21',
+  'Nike','Adidas','Foot Locker','Rack Room','Bath & Body Works',
+  'American Eagle','Hollister','Abercrombie',
+  'Uber','Lyft','Airbnb','Southwest','Delta','American Airlines',
+  'JetBlue','Frontier','Spirit Airlines',
+  'Netflix','Spotify','Hulu','Disney','Apple','Google','Microsoft',
+  'Adobe','Dropbox','Zoom',
+  'Waste Management','Republic Services',
+  'GEICO','State Farm','Allstate','Progressive','Nationwide',
+];
+
+function cleanStoreName(raw){
+  if(!raw) return '';
+  const upper = raw.toUpperCase();
+  // 1. Match against known brands
+  for(const b of KNOWN_BRANDS){
+    if(upper.includes(b.toUpperCase())) return b;
+  }
+  // 2. Strip store number (#1234 or No. 1234)
+  let clean = raw.replace(/\s*(#|No\.?)\s*\d+.*/i, '').trim();
+  // 3. Strip trailing city/state-like token (2-letter state abbreviations after a comma)
+  clean = clean.replace(/,\s*[A-Z]{2}\s*$/, '').trim();
+  // 4. Strip common generic suffixes
+  clean = clean.replace(/\s+(supercenter|superstore|marketplace|market|supermarket|pharmacy|gas station|fuel|express|plus|inc\.?|llc\.?|corp\.?|co\.?|ltd\.?)$/i, '').trim();
+  // 5. Title-case if all-caps
+  if(clean === clean.toUpperCase() && clean.length > 2){
+    clean = clean.toLowerCase().replace(/\b\w/g, c=>c.toUpperCase());
+  }
+  return clean.slice(0, 50);
 }
 
 // ═══════════════════════════════════════════════
@@ -2017,7 +2065,8 @@ function closeCamera(){
 }
 
 function startCamera(){
-  // Called from receipt modal — camera captures feed back into receipt OCR flow
+  // Close the receipt modal first so the camera view is fully visible
+  closeModal('mReceipt');
   openCamera();
 }
 
