@@ -1943,10 +1943,27 @@ async function initFileSync(){
 async function ensureWritePermission(){
   if(!dataFileHandle) return false;
   try{
-    let perm = await dataFileHandle.queryPermission({mode:'readwrite'});
-    if(perm === 'prompt') perm = await dataFileHandle.requestPermission({mode:'readwrite'});
+    // Only QUERY — never request in an async chain (user activation would be expired)
+    // If permission is 'prompt' or 'denied', we just return false and the badge
+    // shows "reconnect". The user can reconnect via the sync badge (user gesture).
+    const perm = await dataFileHandle.queryPermission({mode:'readwrite'});
     return perm === 'granted';
   }catch(e){ return false; }
+}
+
+// Called directly from a user click — safe to request permission here
+async function reconnectFile(){
+  if(!dataFileHandle) return;
+  try{
+    const perm = await dataFileHandle.requestPermission({mode:'readwrite'});
+    if(perm === 'granted'){
+      updateSyncBadge('connected');
+      await loadFromFile();
+      toast(state.lang==='es'?'✅ Reconectado':'✅ Reconnected','ok');
+    } else {
+      toast(state.lang==='es'?'Permiso denegado — intenta conectar el archivo de nuevo':'Permission denied — try reconnecting the file','warn');
+    }
+  }catch(e){ toast(state.lang==='es'?'No se pudo reconectar':'Could not reconnect','err'); }
 }
 
 async function saveToFile(){
@@ -2085,10 +2102,16 @@ function openSyncModal(){
     </div>
     ${dataFileHandle
       ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
-           <button class="btn btn-outline btn-sm" onclick="reloadFromFile()">🔄 ${es?'Recargar desde archivo':'Reload from file'}</button>
+           <button class="btn btn-primary btn-sm" onclick="reconnectFile()">🔑 ${es?'Reconectar / Activar':'Reconnect / Activate'}</button>
+           <button class="btn btn-outline btn-sm" onclick="reloadFromFile()">🔄 ${es?'Recargar':'Reload'}</button>
            <button class="btn btn-outline btn-sm" onclick="connectDataFile()">🔗 ${es?'Cambiar archivo':'Change file'}</button>
            <button class="btn btn-ghost btn-sm" onclick="disconnectFile()">🔌 ${es?'Desconectar':'Disconnect'}</button>
-         </div>`
+         </div>
+         <p style="font-size:11px;color:var(--gray-500);margin-top:10px">
+           ${es
+             ? '⚠️ Si los datos no se guardan, presiona <b>Reconectar</b> — el navegador pide permiso al archivo una vez por sesión.'
+             : '⚠️ If data is not saving, tap <b>Reconnect</b> — the browser asks for file permission once per session.'}
+         </p>`
       : api
         ? `<button class="btn btn-primary" onclick="connectDataFile()">☁️ ${es?'Conectar Archivo de Datos':'Connect Data File'}</button>`
         : ''
@@ -2100,10 +2123,11 @@ function openSyncModal(){
 // ═══════════════════════════════════════════════
 // CAMERA CAPTURE + QUALITY DETECTION
 // ═══════════════════════════════════════════════
-let camStream   = null;
-let camInterval = null;
-let goodFrames  = 0;
-const NEED_FRAMES = 3; // 3 × 500ms = 1.5s of steady quality before auto-capture
+let camStream    = null;
+let camInterval  = null;
+let goodFrames   = 0;
+let camReady     = false; // true when all quality checks pass
+const NEED_FRAMES = 6;   // 6 × 500ms = 3s of steady quality before guide turns green
 
 async function openCamera(){
   updateCameraLabels();
@@ -2114,6 +2138,7 @@ async function openCamera(){
     document.getElementById('camVideo').srcObject = camStream;
     openModal('mCamera');
     goodFrames = 0;
+    camReady   = false;
     camInterval = setInterval(checkQuality, 500);
   }catch(e){
     const es = state.lang==='es';
@@ -2138,66 +2163,82 @@ function checkQuality(){
   const video = document.getElementById('camVideo');
   if(!video || video.readyState < 2) return;
 
-  // Sample a small thumbnail — fast enough for 2fps quality polling
+  // Sample 320×240 thumbnail — fast enough for 2fps polling
   const W=320, H=240;
-  const c = document.createElement('canvas'); c.width=W; c.height=H;
-  const ctx = c.getContext('2d');
-  ctx.drawImage(video, 0, 0, W, H);
-  const id = ctx.getImageData(0,0,W,H); const d = id.data;
+  const c=document.createElement('canvas'); c.width=W; c.height=H;
+  c.getContext('2d').drawImage(video,0,0,W,H);
+  const id=c.getContext('2d').getImageData(0,0,W,H); const d=id.data;
 
   // Grayscale + mean brightness
-  const gr = new Uint8Array(W*H); let sm=0;
+  const gr=new Uint8Array(W*H); let sm=0;
   for(let i=0,p=0;i<d.length;i+=4,p++){ gr[p]=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]); sm+=gr[p]; }
-  const mean = sm/gr.length;
+  const mean=sm/gr.length;
 
-  // Laplacian variance — measures edge sharpness (high = sharp, low = blurry)
+  // Laplacian variance — sharpness score
   let lap=0;
   for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
     const v=-4*gr[y*W+x]+gr[(y-1)*W+x]+gr[(y+1)*W+x]+gr[y*W+x-1]+gr[y*W+x+1];
     lap+=v*v;
   }
-  const blur = lap/((W-2)*(H-2));
+  const blur=lap/((W-2)*(H-2));
 
-  // Center brightness — receipt should be the bright zone in the guide frame
-  const cy=Math.floor(H/2), cx=Math.floor(W/2);
-  const centerBright = gr[cy*W+cx];
+  // Center region brightness — the receipt (white paper) should be brighter than surroundings
+  // Sample the inner 40% of the frame where the guide box is
+  let cSum=0, cCount=0;
+  const y0=Math.floor(H*.3),y1=Math.floor(H*.7),x0=Math.floor(W*.3),x1=Math.floor(W*.7);
+  for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++){ cSum+=gr[y*W+x]; cCount++; }
+  const centerMean=cSum/cCount;
 
-  // Quality gates
-  const sharp    = blur > 60;
-  const lit      = mean > 55 && mean < 225;
-  const centered = centerBright > 100;
+  // Quality thresholds — stricter than before
+  const sharp    = blur > 80;            // must be clearly in focus
+  const lit      = mean > 60 && mean < 220; // not too dark or washed out
+  const centered = centerMean > 110;     // center of frame must be bright (the receipt)
   const good     = sharp && lit && centered;
 
   setQC('qc-sharp', sharp);
   setQC('qc-light', lit);
   setQC('qc-pos',   centered);
 
-  const btn = document.getElementById('btnShutter');
-  if(btn) btn.disabled = !good;
-
   const hint = document.getElementById('camHint');
+  const btn  = document.getElementById('btnShutter');
+  const box  = document.querySelector('.guide-box');
   const es   = state.lang==='es';
-  if(hint){
-    if(!lit && mean<=55)       hint.textContent = es?'⚠️ Muy oscuro — busca mejor iluminación':'⚠️ Too dark — find better lighting';
-    else if(!lit && mean>=225) hint.textContent = es?'⚠️ Demasiada luz — evita reflejos directos':'⚠️ Too bright — avoid direct glare';
-    else if(!sharp)            hint.textContent = es?'⚠️ Imagen borrosa — mantén el teléfono firme':'⚠️ Blurry — hold phone steady';
-    else if(!centered)         hint.textContent = es?'📄 Centra el recibo dentro del marco blanco':'📄 Center the receipt inside the white frame';
-    else {
-      goodFrames++;
-      const cd   = document.getElementById('camCD');
-      const left = NEED_FRAMES - goodFrames;
-      if(left > 0){
-        if(cd){ cd.style.display='block'; cd.textContent=left; }
-        hint.textContent = es?'✅ ¡Perfecto! Capturando automáticamente...':'✅ Perfect! Auto-capturing...';
-      } else {
-        if(cd) cd.style.display='none';
-        captureNow();
-      }
-      return;
+
+  if(!good){
+    // Reset steady-frame counter whenever quality drops
+    goodFrames = 0;
+    camReady   = false;
+    if(btn) btn.disabled = true;
+    if(box) box.style.borderColor = 'rgba(255,255,255,.75)';
+    if(hint){
+      if(!lit && mean<=60)        hint.textContent = es?'⚠️ Muy oscuro — busca más luz':'⚠️ Too dark — find more light';
+      else if(!lit && mean>=220)  hint.textContent = es?'⚠️ Demasiada luz — evita reflejos':'⚠️ Too bright — avoid glare';
+      else if(!sharp)             hint.textContent = es?'⚠️ Borroso — mantén el teléfono firme':'⚠️ Blurry — hold phone steady';
+      else                        hint.textContent = es?'📄 Centra el recibo en el marco':'📄 Center the receipt in the frame';
     }
+    return;
   }
-  goodFrames = 0;
-  const cd = document.getElementById('camCD'); if(cd) cd.style.display='none';
+
+  // Quality is good — count steady frames
+  goodFrames++;
+  if(goodFrames < NEED_FRAMES){
+    // Still stabilizing — show a holding message
+    if(hint) hint.textContent = es
+      ? `⏳ Sostén firme... (${goodFrames}/${NEED_FRAMES})`
+      : `⏳ Hold steady... (${goodFrames}/${NEED_FRAMES})`;
+    if(box) box.style.borderColor = '#f59e0b'; // yellow while stabilizing
+    if(btn) btn.disabled = true;
+    return;
+  }
+
+  // Fully stable — enable shutter, DO NOT auto-capture
+  // User must tap the button. This is intentional — she controls when it shoots.
+  camReady = true;
+  if(btn) btn.disabled = false;
+  if(box) box.style.borderColor = '#16a34a'; // green border = ready
+  if(hint) hint.textContent = es
+    ? '✅ ¡Listo! Presiona 📷 para capturar'
+    : '✅ Ready! Tap 📷 to capture';
 }
 
 function setQC(id, ok){
