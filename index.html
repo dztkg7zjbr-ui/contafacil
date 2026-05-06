@@ -263,9 +263,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   <header class="app-header">
     <div class="app-logo">💰 ContaFácil</div>
     <div class="header-spacer"></div>
-    <div class="sync-badge" id="syncBadge" onclick="openSyncModal()" title="OneDrive Sync">
-      <div class="sync-dot off" id="syncDot"></div>
-      <span id="syncLabel">Sin archivo</span>
+    <div class="sync-badge" id="syncBadge" onclick="openSyncModal()" title="Exportar / Importar datos">
+      <div class="sync-dot connected" id="syncDot"></div>
+      <span id="syncLabel">💾 0 mov.</span>
     </div>
     <div class="lang-toggle">
       <button class="lang-btn active" id="btn-es" onclick="setLang('es')">ES</button>
@@ -309,7 +309,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <button class="btn-shutter" id="btnShutter" onclick="captureNow()" disabled title="Capturar">📷</button>
       <div style="width:80px"></div>
     </div>
-    <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:6px" id="camAutoHint">Se capturará automáticamente cuando la imagen sea clara</p>
+    <p style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:6px" id="camAutoHint">El botón 📷 se activa cuando el recibo está bien enmarcado</p>
   </div>
 </div>
 </div>
@@ -645,7 +645,7 @@ let pdfFile = null;
 function t(key){ return (T[state.lang]||T.es)[key] || key; }
 function save(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
-  saveToFile(); // async — also writes to OneDrive JSON file if connected
+  updateSyncBadge();
 }
 function load(){
   try{
@@ -1895,227 +1895,89 @@ function updateLangUI(){
 }
 
 // ═══════════════════════════════════════════════
-// FILE SYNC — File System Access API + OneDrive
+// DATA EXPORT / IMPORT
 // ═══════════════════════════════════════════════
-// How it works:
-//   ContaFacil.html + ContaFacil_Datos.json live in the same OneDrive folder.
-//   The File System Access API reads/writes the JSON on every save.
-//   The file handle is stored in IndexedDB so the connection survives page reloads.
-//   OneDrive syncs the JSON between Mac and iPhone automatically.
-//   Tested: Chrome (Mac), Safari iOS 17+ (iPhone).
+// Simple approach that works on every browser and device — no File System API,
+// no permissions, no IndexedDB handle juggling.
+// To sync between devices: Export → move JSON to OneDrive → Import on other device.
 
-let dataFileHandle = null;
-let fileHandleName  = '';
+let previewBlob = null;
+let previewUrl  = null;
 
-function openHandleDB(){
-  return new Promise((res,rej)=>{
-    const r = indexedDB.open('cf_fsh',1);
-    r.onupgradeneeded = e => e.target.result.createObjectStore('h');
-    r.onsuccess = e => res(e.target.result);
-    r.onerror   = rej;
-  });
-}
-async function storeHandle(h){
-  try{ const db=await openHandleDB(); db.transaction('h','readwrite').objectStore('h').put(h,'df'); }catch(e){}
-}
-async function clearHandle(){
-  try{ const db=await openHandleDB(); db.transaction('h','readwrite').objectStore('h').delete('df'); }catch(e){}
+function exportData(){
+  const json = JSON.stringify(state, null, 2);
+  const blob = new Blob([json], {type:'application/json'});
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  const ts   = new Date().toISOString().slice(0,10);
+  a.href = url; a.download = 'ContaFacil_'+ts+'.json'; a.click();
+  setTimeout(()=>URL.revokeObjectURL(url), 3000);
+  const es = state.lang==='es';
+  toast(es?'✅ Datos exportados — guárdalos en OneDrive':'✅ Data exported — save to OneDrive','ok');
 }
 
-async function initFileSync(){
-  if(!window.showOpenFilePicker) return; // browser doesn't support it
-  try{
-    const db  = await openHandleDB();
-    const req = db.transaction('h','readonly').objectStore('h').get('df');
-    req.onsuccess = async ()=>{
-      if(!req.result) return;
-      dataFileHandle = req.result;
-      fileHandleName = req.result.name;
-      const perm = await dataFileHandle.queryPermission({mode:'readwrite'});
-      if(perm === 'granted'){
-        await loadFromFile();   // load newest data from OneDrive file
-      }
-      updateSyncBadge();
-    };
-  }catch(e){ console.warn('initFileSync:',e); }
-}
-
-async function ensureWritePermission(){
-  if(!dataFileHandle) return false;
-  try{
-    // Only QUERY — never request in an async chain (user activation would be expired)
-    // If permission is 'prompt' or 'denied', we just return false and the badge
-    // shows "reconnect". The user can reconnect via the sync badge (user gesture).
-    const perm = await dataFileHandle.queryPermission({mode:'readwrite'});
-    return perm === 'granted';
-  }catch(e){ return false; }
-}
-
-// Called directly from a user click — safe to request permission here
-async function reconnectFile(){
-  if(!dataFileHandle) return;
-  try{
-    const perm = await dataFileHandle.requestPermission({mode:'readwrite'});
-    if(perm === 'granted'){
-      updateSyncBadge('connected');
-      await loadFromFile();
-      toast(state.lang==='es'?'✅ Reconectado':'✅ Reconnected','ok');
-    } else {
-      toast(state.lang==='es'?'Permiso denegado — intenta conectar el archivo de nuevo':'Permission denied — try reconnecting the file','warn');
+function importData(){
+  const es = state.lang==='es';
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json,application/json';
+  input.onchange = async ()=>{
+    const file = input.files[0]; if(!file) return;
+    try{
+      const text = await file.text();
+      const d = JSON.parse(text);
+      if(!d.pages) throw new Error('Invalid format');
+      Object.assign(state, d);
+      save(); renderAll(); updateSyncBadge(); closeModal('mSync');
+      toast(es?`✅ Importado — ${d.pages.length} cuenta(s) cargadas`:`✅ Imported — ${d.pages.length} account(s) loaded`,'ok');
+    }catch(e){
+      toast(es?'Error al leer el archivo — verifica que sea un JSON de ContaFácil':'Error reading file — must be a ContaFácil JSON','err');
     }
-  }catch(e){ toast(state.lang==='es'?'No se pudo reconectar':'Could not reconnect','err'); }
+  };
+  input.click();
 }
 
-async function saveToFile(){
-  if(!dataFileHandle) return;
-  try{
-    if(! await ensureWritePermission()){ updateSyncBadge('error'); return; }
-    const w = await dataFileHandle.createWritable();
-    await w.write(JSON.stringify(state, null, 2));
-    await w.close();
-    updateSyncBadge('connected');
-  }catch(e){ console.warn('saveToFile:',e); updateSyncBadge('error'); }
-}
-
-async function loadFromFile(){
-  if(!dataFileHandle) return;
-  try{
-    if(! await ensureWritePermission()) return;
-    const file = await dataFileHandle.getFile();
-    if(file.size < 3) return; // empty / new file
-    const d = JSON.parse(await file.text());
-    Object.assign(state, d);
-    renderAll();
-    updateSyncBadge('connected');
-  }catch(e){ console.warn('loadFromFile:',e); }
-}
-
-async function connectDataFile(){
-  if(!window.showOpenFilePicker){
-    toast(state.lang==='es'
-      ? 'Tu navegador no admite esta función. Usa Safari iOS 17+ o Chrome en Mac.'
-      : 'Browser not supported. Use Safari iOS 17+ or Chrome on Mac.','warn');
-    return;
-  }
-  try{
-    let h;
-    // showSaveFilePicker lets her create + name the file (best UX)
-    if(window.showSaveFilePicker){
-      try{
-        h = await window.showSaveFilePicker({
-          suggestedName: 'ContaFacil_Datos.json',
-          types:[{description:'ContaFácil Data',accept:{'application/json':['.json']}}],
-        });
-      }catch(e2){
-        if(e2.name==='AbortError') return;
-        // Fallback to open picker if save picker isn't supported
-        [h] = await window.showOpenFilePicker({
-          types:[{description:'ContaFácil Data',accept:{'application/json':['.json']}}],
-        });
-      }
-    } else {
-      [h] = await window.showOpenFilePicker({
-        types:[{description:'ContaFácil Data',accept:{'application/json':['.json']}}],
-      });
-    }
-    dataFileHandle = h;
-    fileHandleName = h.name;
-    await storeHandle(h);
-    // If file already has data (connecting from 2nd device), load it
-    const file = await h.getFile();
-    if(file.size > 3){
-      try{
-        const d = JSON.parse(await file.text());
-        Object.assign(state, d);
-        renderAll();
-        toast(state.lang==='es'?'✅ Datos cargados desde el archivo':'✅ Data loaded from file','ok');
-      }catch(e){ await saveToFile(); }
-    } else {
-      await saveToFile(); // write current state to new file
-      toast(state.lang==='es'?'✅ Archivo nuevo conectado y guardado':'✅ New file connected and saved','ok');
-    }
-    updateSyncBadge('connected');
-    closeModal('mSync');
-    openSyncModal();
-  }catch(e){
-    if(e.name!=='AbortError') toast(state.lang==='es'?'No se pudo conectar el archivo':'Could not connect file','err');
-  }
-}
-
-async function reloadFromFile(){
-  await loadFromFile();
-  toast(state.lang==='es'?'Datos actualizados':'Data refreshed','ok');
-  closeModal('mSync');
-}
-
-function disconnectFile(){
-  dataFileHandle = null; fileHandleName = '';
-  clearHandle();
-  updateSyncBadge();
-  openSyncModal();
-}
-
-function updateSyncBadge(status){
+function updateSyncBadge(){
   const dot = document.getElementById('syncDot');
   const lbl = document.getElementById('syncLabel');
   if(!dot||!lbl) return;
   const es = state.lang==='es';
-  if(status==='connected' || (dataFileHandle && !status)){
-    dot.className='sync-dot connected';
-    lbl.textContent = es ? '☁️ Sincronizado' : '☁️ Synced';
-  } else if(status==='error'){
-    dot.className='sync-dot error';
-    lbl.textContent = es ? 'Error de sync' : 'Sync error';
-  } else {
-    dot.className='sync-dot off';
-    lbl.textContent = es ? 'Sin archivo' : 'No file';
-  }
+  const txCount = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
+  dot.className = 'sync-dot connected';
+  lbl.textContent = es ? '💾 '+txCount+' mov.' : '💾 '+txCount+' txn';
 }
 
 function openSyncModal(){
-  const es  = state.lang==='es';
-  const api = !!window.showOpenFilePicker;
-  document.getElementById('mSyncTitle').textContent = es ? '☁️ Sincronización OneDrive' : '☁️ OneDrive Sync';
+  const es = state.lang==='es';
+  document.getElementById('mSyncTitle').textContent = es ? '📤 Exportar / Importar' : '📤 Export / Import';
+  const txCount = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
   document.getElementById('mSyncBody').innerHTML = `
-    <div class="${dataFileHandle?'info-box':'warn-box'}" style="${dataFileHandle?'background:var(--success-light);border-left-color:var(--success);color:#14532d':''}">
-      ${dataFileHandle
-        ? `✅ ${es?`Conectado: <b>${esc(fileHandleName)}</b>`:`Connected: <b>${esc(fileHandleName)}</b>`} — ${es?'los datos se guardan automáticamente al hacer cambios':'data saves automatically on every change'}`
-        : `⚠️ ${es?'Sin archivo — los datos solo existen en este navegador':'No file — data only lives in this browser'}`}
+    <div class="info-box" style="background:var(--success-light);border-left-color:var(--success);color:#14532d;margin-bottom:16px">
+      💾 ${es ? txCount+' movimiento(s) guardados en este dispositivo' : txCount+' transaction(s) saved on this device'}
     </div>
-    ${!api ? `<div class="warn-box">${es?'Este navegador no admite sincronización de archivos. En iPhone usa <b>Safari iOS 17+</b>; en Mac usa <b>Chrome</b> o <b>Safari</b>.':'This browser does not support file sync. On iPhone use <b>Safari iOS 17+</b>; on Mac use <b>Chrome</b> or <b>Safari</b>.'}</div>` : ''}
     <div style="font-size:13px;color:var(--gray-700);line-height:1.9;margin-bottom:16px">
       ${es
-        ? `<b>Configuración (una sola vez por dispositivo):</b><br>
-           1. Crea una carpeta en OneDrive llamada <b>ContaFácil</b><br>
-           2. Coloca este archivo <b>.html</b> dentro de esa carpeta<br>
-           3. Presiona <b>"Conectar Archivo de Datos"</b> abajo<br>
-           4. Guarda el archivo como <b>ContaFacil_Datos.json</b> en la misma carpeta<br>
-           5. Repite los pasos 3–4 en el iPhone — selecciona el <i>mismo</i> archivo JSON<br>
-           6. OneDrive sincroniza todo automáticamente entre dispositivos 🎉`
-        : `<b>Setup (once per device):</b><br>
-           1. Create a folder in OneDrive called <b>ContaFácil</b><br>
-           2. Place this <b>.html</b> file inside that folder<br>
-           3. Press <b>"Connect Data File"</b> below<br>
-           4. Save the file as <b>ContaFacil_Datos.json</b> in the same folder<br>
-           5. Repeat steps 3–4 on iPhone — select the <i>same</i> JSON file<br>
-           6. OneDrive syncs everything automatically between devices 🎉`}
+        ? `<b>¿Cómo pasar datos a otro dispositivo?</b><br>
+           1. En este dispositivo presiona <b>Exportar</b> — se descarga un archivo .json<br>
+           2. Mueve ese archivo a <b>OneDrive</b> (o envíalo por correo / AirDrop)<br>
+           3. En el otro dispositivo abre ContaFácil → presiona <b>Importar</b> → selecciona el archivo`
+        : `<b>How to move data to another device:</b><br>
+           1. On this device tap <b>Export</b> — a .json file downloads<br>
+           2. Move that file to <b>OneDrive</b> (or share via email / AirDrop)<br>
+           3. On the other device open ContaFácil → tap <b>Import</b> → pick the file`}
     </div>
-    ${dataFileHandle
-      ? `<div style="display:flex;gap:8px;flex-wrap:wrap">
-           <button class="btn btn-primary btn-sm" onclick="reconnectFile()">🔑 ${es?'Reconectar / Activar':'Reconnect / Activate'}</button>
-           <button class="btn btn-outline btn-sm" onclick="reloadFromFile()">🔄 ${es?'Recargar':'Reload'}</button>
-           <button class="btn btn-outline btn-sm" onclick="connectDataFile()">🔗 ${es?'Cambiar archivo':'Change file'}</button>
-           <button class="btn btn-ghost btn-sm" onclick="disconnectFile()">🔌 ${es?'Desconectar':'Disconnect'}</button>
-         </div>
-         <p style="font-size:11px;color:var(--gray-500);margin-top:10px">
-           ${es
-             ? '⚠️ Si los datos no se guardan, presiona <b>Reconectar</b> — el navegador pide permiso al archivo una vez por sesión.'
-             : '⚠️ If data is not saving, tap <b>Reconnect</b> — the browser asks for file permission once per session.'}
-         </p>`
-      : api
-        ? `<button class="btn btn-primary" onclick="connectDataFile()">☁️ ${es?'Conectar Archivo de Datos':'Connect Data File'}</button>`
-        : ''
-    }`;
+    <div style="display:flex;gap:10px;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="exportData()">
+        📥 ${es?'Exportar datos':'Export data'}
+      </button>
+      <button class="btn btn-outline" onclick="importData()">
+        📤 ${es?'Importar datos':'Import data'}
+      </button>
+    </div>
+    <p style="font-size:11px;color:var(--gray-500);margin-top:14px">
+      ${es
+        ? '⚠️ Al importar, los datos de este dispositivo se reemplazarán con los del archivo.'
+        : '⚠️ Importing replaces the current data on this device with the file\'s data.'}
+    </p>`;
   document.getElementById('mSyncClose').textContent = t('close');
   openModal('mSync');
 }
@@ -2163,82 +2025,92 @@ function checkQuality(){
   const video = document.getElementById('camVideo');
   if(!video || video.readyState < 2) return;
 
-  // Sample 320×240 thumbnail — fast enough for 2fps polling
+  // Sample 320×240 — fast enough for 2fps polling
   const W=320, H=240;
   const c=document.createElement('canvas'); c.width=W; c.height=H;
   c.getContext('2d').drawImage(video,0,0,W,H);
   const id=c.getContext('2d').getImageData(0,0,W,H); const d=id.data;
 
-  // Grayscale + mean brightness
-  const gr=new Uint8Array(W*H); let sm=0;
-  for(let i=0,p=0;i<d.length;i+=4,p++){ gr[p]=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]); sm+=gr[p]; }
-  const mean=sm/gr.length;
+  // Grayscale
+  const gr=new Uint8Array(W*H);
+  for(let i=0,p=0;i<d.length;i+=4,p++) gr[p]=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);
 
-  // Laplacian variance — sharpness score
-  let lap=0;
-  for(let y=1;y<H-1;y++) for(let x=1;x<W-1;x++){
-    const v=-4*gr[y*W+x]+gr[(y-1)*W+x]+gr[(y+1)*W+x]+gr[y*W+x-1]+gr[y*W+x+1];
-    lap+=v*v;
+  // Guide box inner region (where receipt must be) vs outer corners/edges
+  const ix0=Math.floor(W*.10), ix1=Math.floor(W*.90);
+  const iy0=Math.floor(H*.10), iy1=Math.floor(H*.90);
+  let innerSum=0,innerN=0,outerSum=0,outerN=0;
+  for(let y=0;y<H;y++) for(let x=0;x<W;x++){
+    const v=gr[y*W+x];
+    if(x>=ix0&&x<ix1&&y>=iy0&&y<iy1){ innerSum+=v; innerN++; }
+    else { outerSum+=v; outerN++; }
   }
-  const blur=lap/((W-2)*(H-2));
+  const innerMean = innerN>0 ? innerSum/innerN : 0;
+  const outerMean = outerN>0 ? outerSum/outerN : 0;
+  const contrast  = innerMean - outerMean; // receipt(white) vs background(dark)
 
-  // Center region brightness — the receipt (white paper) should be brighter than surroundings
-  // Sample the inner 40% of the frame where the guide box is
-  let cSum=0, cCount=0;
-  const y0=Math.floor(H*.3),y1=Math.floor(H*.7),x0=Math.floor(W*.3),x1=Math.floor(W*.7);
-  for(let y=y0;y<y1;y++) for(let x=x0;x<x1;x++){ cSum+=gr[y*W+x]; cCount++; }
-  const centerMean=cSum/cCount;
+  // Laplacian sharpness — only inside guide box (where text lives)
+  let lapSum=0, lapN=0;
+  for(let y=iy0+1;y<iy1-1;y++) for(let x=ix0+1;x<ix1-1;x++){
+    const v=-4*gr[y*W+x]+gr[(y-1)*W+x]+gr[(y+1)*W+x]+gr[y*W+x-1]+gr[y*W+x+1];
+    lapSum+=v*v; lapN++;
+  }
+  const blur = lapN>0 ? lapSum/lapN : 0;
 
-  // Quality thresholds — stricter than before
-  const sharp    = blur > 80;            // must be clearly in focus
-  const lit      = mean > 60 && mean < 220; // not too dark or washed out
-  const centered = centerMean > 110;     // center of frame must be bright (the receipt)
-  const good     = sharp && lit && centered;
+  // Three quality checks:
+  // 1. Receipt white paper is bright inside the guide box
+  const bright      = innerMean > 150;
+  // 2. Receipt (inside) is noticeably brighter than the background (outside)
+  const contrast_ok = contrast  > 25;
+  // 3. Phone is steady — text edges create high Laplacian variance
+  const sharp       = blur > 100;
+  // 4. Not completely blown out
+  const notBlown    = innerMean < 248;
 
+  setQC('qc-pos',   bright && contrast_ok);
+  setQC('qc-light', bright && notBlown);
   setQC('qc-sharp', sharp);
-  setQC('qc-light', lit);
-  setQC('qc-pos',   centered);
 
+  const good = bright && contrast_ok && sharp && notBlown;
   const hint = document.getElementById('camHint');
   const btn  = document.getElementById('btnShutter');
   const box  = document.querySelector('.guide-box');
   const es   = state.lang==='es';
 
   if(!good){
-    // Reset steady-frame counter whenever quality drops
-    goodFrames = 0;
-    camReady   = false;
-    if(btn) btn.disabled = true;
-    if(box) box.style.borderColor = 'rgba(255,255,255,.75)';
+    goodFrames=0; camReady=false;
+    if(btn) btn.disabled=true;
+    if(box) box.style.borderColor='rgba(255,255,255,.75)';
     if(hint){
-      if(!lit && mean<=60)        hint.textContent = es?'⚠️ Muy oscuro — busca más luz':'⚠️ Too dark — find more light';
-      else if(!lit && mean>=220)  hint.textContent = es?'⚠️ Demasiada luz — evita reflejos':'⚠️ Too bright — avoid glare';
-      else if(!sharp)             hint.textContent = es?'⚠️ Borroso — mantén el teléfono firme':'⚠️ Blurry — hold phone steady';
-      else                        hint.textContent = es?'📄 Centra el recibo en el marco':'📄 Center the receipt in the frame';
+      if(!bright && innerMean<=150)
+        hint.textContent=es?'📄 Acerca el recibo — debe llenar el marco':'📄 Move receipt closer — it should fill the frame';
+      else if(!contrast_ok)
+        hint.textContent=es?'📄 Fondo muy claro — busca una superficie oscura':'📄 Background too bright — use a darker surface';
+      else if(!sharp)
+        hint.textContent=es?'⚠️ Borroso — mantén el teléfono firme':'⚠️ Blurry — hold phone steady';
+      else if(!notBlown)
+        hint.textContent=es?'⚠️ Demasiada luz — reduce el brillo o muévete':'⚠️ Overexposed — reduce lighting or move away';
+      else
+        hint.textContent=es?'📄 Coloca el recibo dentro del marco':'📄 Place receipt within the frame';
     }
     return;
   }
 
-  // Quality is good — count steady frames
+  // All checks pass — count consecutive good frames (must hold steady)
   goodFrames++;
   if(goodFrames < NEED_FRAMES){
-    // Still stabilizing — show a holding message
     if(hint) hint.textContent = es
-      ? `⏳ Sostén firme... (${goodFrames}/${NEED_FRAMES})`
-      : `⏳ Hold steady... (${goodFrames}/${NEED_FRAMES})`;
-    if(box) box.style.borderColor = '#f59e0b'; // yellow while stabilizing
-    if(btn) btn.disabled = true;
+      ? '⏳ Sostén firme... ('+goodFrames+'/'+NEED_FRAMES+')'
+      : '⏳ Hold steady... ('+goodFrames+'/'+NEED_FRAMES+')';
+    if(box) box.style.borderColor='#f59e0b';
+    if(btn) btn.disabled=true;
     return;
   }
 
-  // Fully stable — enable shutter, DO NOT auto-capture
-  // User must tap the button. This is intentional — she controls when it shoots.
-  camReady = true;
-  if(btn) btn.disabled = false;
-  if(box) box.style.borderColor = '#16a34a'; // green border = ready
-  if(hint) hint.textContent = es
-    ? '✅ ¡Listo! Presiona 📷 para capturar'
-    : '✅ Ready! Tap 📷 to capture';
+  // Stable and ready — enable shutter button (user taps, NO auto-capture)
+  camReady=true;
+  if(btn) btn.disabled=false;
+  if(box) box.style.borderColor='#16a34a';
+  if(hint) hint.textContent = es ? '✅ ¡Listo! Presiona 📷 para capturar' : '✅ Ready! Tap 📷 to capture';
 }
 
 function setQC(id, ok){
@@ -2247,31 +2119,58 @@ function setQC(id, ok){
 }
 
 function captureNow(){
+  if(!camReady) return;
   clearInterval(camInterval); camInterval=null;
+
   const video = document.getElementById('camVideo');
   const canvas = document.createElement('canvas');
   canvas.width=video.videoWidth; canvas.height=video.videoHeight;
   canvas.getContext('2d').drawImage(video,0,0);
-  closeCamera();
+
+  // Stop the camera stream immediately — user sees the freeze-frame preview
+  if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
+  if(camInterval){ clearInterval(camInterval); camInterval=null; }
+  closeModal('mCamera');
+
   canvas.toBlob(blob=>{
-    ocrFile = blob;
-    openModal('mReceipt');
-    // Show captured frame + auto-start OCR
-    const url = URL.createObjectURL(blob);
-    document.getElementById('mReceiptTitle').textContent = t('loadReceipt');
+    // Clean up any previous preview
+    if(previewUrl) URL.revokeObjectURL(previewUrl);
+    previewBlob = blob;
+    previewUrl  = URL.createObjectURL(blob);
+    const es = state.lang==='es';
+
+    // Show PREVIEW — user must confirm before OCR starts
+    document.getElementById('mReceiptTitle').textContent = es ? '📷 Vista previa' : '📷 Preview';
     document.getElementById('mReceiptBody').innerHTML = `
-      <div class="info-box" style="background:var(--success-light);border-left-color:var(--success);color:#14532d">
-        📷 ${state.lang==='es'?'Foto capturada — analizando el recibo...':'Photo captured — analyzing receipt...'}
-      </div>
-      <img src="${url}" class="receipt-img" style="max-height:180px;margin-bottom:10px">
-      <div id="rcpProgress"></div>`;
+      <img src="${previewUrl}" style="width:100%;border-radius:8px;margin-bottom:12px;max-height:55vh;object-fit:contain">
+      <p style="font-size:13px;color:var(--gray-600);text-align:center;margin:0">
+        ${es ? '¿Se ven bien el total, la tienda y la fecha?' : 'Can you clearly see the total, store and date?'}
+      </p>`;
     document.getElementById('mReceiptFoot').innerHTML = `
-      <button class="btn btn-ghost" onclick="closeModal('mReceipt')">${t('cancel')}</button>
-      <button class="btn btn-primary" id="btn-analyze" disabled>
-        <div class="spinner"></div> ${t('analyzing')}
+      <button class="btn btn-outline" onclick="closeModal('mReceipt');openCamera()">
+        🔄 ${es?'Repetir':'Retake'}
+      </button>
+      <button class="btn btn-primary" onclick="confirmReceiptPhoto()">
+        ✅ ${es?'Usar esta foto':'Use this photo'}
       </button>`;
-    setTimeout(()=>runReceiptOCR(), 300);
-  },'image/jpeg',0.95);
+    openModal('mReceipt');
+  }, 'image/jpeg', 0.94);
+}
+
+function confirmReceiptPhoto(){
+  if(!previewBlob || !previewUrl) return;
+  ocrFile = previewBlob;
+  const es = state.lang==='es';
+  document.getElementById('mReceiptTitle').textContent = t('loadReceipt');
+  document.getElementById('mReceiptBody').innerHTML = `
+    <img src="${previewUrl}" class="receipt-img" style="max-height:160px;margin-bottom:10px;border-radius:6px">
+    <div id="rcpProgress" style="margin-top:8px"></div>`;
+  document.getElementById('mReceiptFoot').innerHTML = `
+    <button class="btn btn-ghost" onclick="closeModal('mReceipt')">${t('cancel')}</button>
+    <button class="btn btn-primary" id="btn-analyze" disabled>
+      <div class="spinner"></div> ${t('analyzing')}
+    </button>`;
+  setTimeout(()=>runReceiptOCR(), 150);
 }
 
 function updateCameraLabels(){
@@ -2283,7 +2182,7 @@ function updateCameraLabels(){
   el('ql-pos',      es?'Posición':'Position');
   el('camHint',     es?'Coloca el recibo dentro del marco':'Place receipt within the frame');
   el('camCancelBtn',es?'Cancelar':'Cancel');
-  el('camAutoHint', es?'Se capturará automáticamente cuando la imagen sea clara':'Will auto-capture when image is clear');
+  el('camAutoHint', es?'El botón 📷 se activa cuando el recibo está bien enmarcado':'The 📷 button lights up when the receipt is properly framed');
 }
 
 // ═══════════════════════════════════════════════
@@ -2292,7 +2191,7 @@ function updateCameraLabels(){
 load();
 if(!state.activeTab) state.activeTab='master';
 renderAll();
-initFileSync(); // async — restores OneDrive file handle if previously connected
+updateSyncBadge(); // show transaction count in header badge
 </script>
 </body>
 </html>
