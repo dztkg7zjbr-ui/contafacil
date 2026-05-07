@@ -4,6 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
 <title>ContaFácil – Contabilidad Personal</title>
+
+<!-- ── PWA / Home Screen ── -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#2563eb">
+
+<!-- iOS standalone mode (removes Safari browser chrome when launched from home screen) -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ContaFácil">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<!-- Standard favicon -->
+<link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <style>
@@ -255,6 +269,61 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 .cam-divider{display:flex;align-items:center;gap:8px;margin:12px 0}
 .cam-divider-line{flex:1;height:1px;background:var(--gray-200)}
 .cam-or{font-size:12px;font-weight:600;color:var(--gray-400)}
+
+/* ── TOTAL GUIDE LINE (inside camera guide box) ── */
+.total-guide{
+  position:absolute;left:0;right:0;top:75%;
+  border-top:2.5px dashed rgba(255,120,0,.95);
+  pointer-events:none;
+}
+.total-guide::before{
+  content:'';position:absolute;left:0;right:0;
+  top:-6px;height:12px;
+  background:rgba(255,120,0,.08);
+}
+.total-guide::after{
+  content:attr(data-label);
+  position:absolute;right:6px;top:-22px;
+  background:rgba(255,120,0,.92);color:#fff;
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:3px;
+  letter-spacing:.3px;white-space:nowrap;
+}
+.total-guide-hint{
+  position:absolute;left:0;right:0;top:calc(75% + 6px);
+  text-align:center;font-size:10px;color:rgba(255,220,150,.95);
+  font-weight:600;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.7);
+}
+
+/* ── MOBILE RESPONSIVE ── */
+@media(max-width:640px){
+  .main-content{padding:10px}
+  /* touch-action:pan-x → table handles left/right swipes for categories;
+     vertical swipes are NOT handled here so they bubble up to the page */
+  .table-wrap{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-x:contain;
+    touch-action:pan-x;
+  }
+  table{font-size:12px}
+  th,td{padding:6px 7px}
+  /* Always show row actions on touch (no hover state) */
+  .cell-actions{opacity:1!important}
+  .sum-grid{grid-template-columns:repeat(2,1fr)}
+  .page-actions{flex-wrap:wrap}
+  .card-header{flex-wrap:wrap}
+  .modal{max-height:96vh}
+  .modal-body{padding:14px 16px}
+  .modal-head{padding:14px 16px 10px}
+  .modal-foot{padding:10px 16px}
+  .camera-wrap{max-height:55vh}
+}
+@media(max-width:400px){
+  table{font-size:11px}
+  th,td{padding:5px 5px}
+  .btn-sm{padding:4px 8px;font-size:11px}
+  .cell-input.date-in{max-width:76px}
+}
 </style>
 </head>
 <body>
@@ -292,6 +361,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
           <div class="guide-corner gc-tr"></div>
           <div class="guide-corner gc-bl"></div>
           <div class="guide-corner gc-br"></div>
+          <!-- Orange guide line: user aligns the TOTAL row here -->
+          <div class="total-guide" id="totalGuideLine" data-label="TOTAL ↕"></div>
+          <div class="total-guide-hint" id="totalGuideHint">Align the TOTAL with this line 🟠</div>
         </div>
         <div class="cam-countdown" id="camCD"></div>
         <div class="cam-status">
@@ -645,6 +717,7 @@ let pdfFile = null;
 function t(key){ return (T[state.lang]||T.es)[key] || key; }
 function save(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+  triggerFileSync(); // write to OneDrive file if connected (no-op if not)
   updateSyncBadge();
 }
 function load(){
@@ -851,12 +924,15 @@ function parseReceiptText(text, text2=''){
   // ── STORE NAME ──
   // IMPORTANT: Harbor Freight MUST come before Lowe's in the brand scan to avoid
   // OCR garbles of product names like "Grant's" being mistaken for "Lowe's".
+  // We search fullUpperAll (both PSM4 + PSM6) so the store footer captured below
+  // the total line (e.g. "T.J.MAXX VALUES YOUR FEEDBACK!") is also checked.
   let storeName = '';
   for(const b of KNOWN_BRANDS){
-    if(fullUpper1.includes(b.toUpperCase())){ storeName = b; break; }
+    if(fullUpperAll.includes(b.toUpperCase())){ storeName = b; break; }
   }
 
-  // Tagline / URL hints (searched in PSM4 text only to reduce false positives)
+  // Tagline / URL hints — searched in ALL OCR text (PSM4 + PSM6) so store
+  // branding in the receipt footer (below the total) is caught.
   if(!storeName){
     const TAGLINE_MAP = [
       // Harbor Freight hints FIRST
@@ -865,18 +941,24 @@ function parseReceiptText(text, text2=''){
       // Home Depot hints
       ['doers','Home Depot'],['doors','Home Depot'],
       ['keedepot','Home Depot'],['homedepot','Home Depot'],['ikeedepot','Home Depot'],
+      // TJ Maxx / HomeGoods / Marshalls — footer often has these
+      ['t.j.maxx','TJ Maxx'],['tjmaxx','TJ Maxx'],['tjmaxxfeedback','TJ Maxx'],['tjx.com','TJ Maxx'],
+      ['homegoods','HomeGoods'],['home goods','HomeGoods'],['homesense','HomeSense'],
+      ['marshalls','Marshalls'],['marshallsonline','Marshalls'],
       // Other
       ["lowe's",'Lowe\'s'],['lowes.com','Lowe\'s'],
       ['bestbuy','Best Buy'],['kohls',"Kohl's"],['macys',"Macy's"],
-      ['tjmaxx','TJ Maxx'],['marshalls','Marshalls'],['samsclub',"Sam's Club"],
+      ['samsclub',"Sam's Club"],
       ['walmart','Walmart'],['wal-mart','Walmart'],['target.com','Target'],
     ];
     for(const [hint,brand] of TAGLINE_MAP){
-      if(fullUpper1.includes(hint.toUpperCase())){ storeName = brand; break; }
+      if(fullUpperAll.includes(hint.toUpperCase())){ storeName = brand; break; }
     }
   }
 
   // First clean line in the top 12 (min 5 chars to filter OCR noise)
+  // Skip lines that look like shopping-center/mall names rather than store names.
+  const MALL_WORDS = /\b(place|center|centre|plaza|mall|square|commons|village|crossing|station|landing|galleria|pavilion|promenade|marketplace|shoppes|outlets|united states)\b/i;
   if(!storeName){
     for(let i=0; i<Math.min(12,lines1.length); i++){
       const l = lines1[i];
@@ -886,6 +968,7 @@ function parseReceiptText(text, text2=''){
       if(/^\d+\s+[A-Za-z]/.test(l)) continue;
       if(/^(www\.|http|receipt|invoice|thank|order\s*#|store\s*#|#\d)/i.test(l)) continue;
       if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;
+      if(MALL_WORDS.test(l)) continue; // skip mall/center names like "HARBOR PLACE"
       const letters = (l.match(/[a-zA-Z]/g)||[]).length;
       if(letters / l.length > 0.4){
         storeName = l.replace(/[^a-zA-Z0-9\s&'.,#\-]/g,' ').trim().replace(/\s+/g,' ').slice(0,60);
@@ -991,7 +1074,7 @@ function parseReceiptText(text, text2=''){
     function tier2(lns){
       let sub=null, tax=null;
       for(const line of lns){
-        if(!sub && /\bsub[\s\-]?t[o0]?tal\b/i.test(line)){
+        if(!sub && /\bsub\s*t[o0]?ta/i.test(line)){  // loose match handles OCR garbles like "Subtota|"
           const m=line.match(/\$?\s*([\d,]+\.\d{1,2})/); if(m) sub=parseFloat(m[1].replace(/,/g,''));
         }
         if(!tax && /\b(sales?\s+tax[a-z]?|tax[a-z]?|iva|hst|gst|vat)\b/i.test(line)
@@ -1007,10 +1090,14 @@ function parseReceiptText(text, text2=''){
 
   // Tier 3: largest dollar value in the bottom half of PSM4 text
   // (1 or 2 decimal places — OCR often drops the last digit: "143.01" → "143.0")
+  // Skip lines that mention gift cards, prizes, or survey rewards — those amounts
+  // (e.g. "$500 gift card") are not the transaction total.
+  const TIER3_SKIP = /\b(gift\s*card|win|prize|survey|feedback|chance|enter\s*code|coupon|reward)\b/i;
   if(amount===null){
     function tier3(lns){
       const half = lns.slice(Math.floor(lns.length/2));
       const amts = half
+        .filter(l=>!TIER3_SKIP.test(l))
         .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)])
         .map(m=>parseFloat(m[1].replace(/,/g,'')))
         .filter(v=>!isNaN(v) && v>0.49 && v<9999);
@@ -1051,7 +1138,7 @@ const KNOWN_BRANDS = [
   'Amazon','eBay','Best Buy',
   // Discount & apparel
   'Dollar Tree','Dollar General','Family Dollar','Five Below','Big Lots',
-  'Marshalls','TJ Maxx','Ross','Burlington','Nordstrom','Macy\'s',
+  'Marshalls','TJ Maxx','T.J.Maxx','HomeGoods','HomeSense','Ross','Burlington','Nordstrom','Macy\'s',
   'Kohl\'s','Gap','Old Navy','Banana Republic','H&M','Zara','Forever 21',
   'Nike','Adidas','Foot Locker','Rack Room','Bath & Body Works',
   'American Eagle','Hollister','Abercrombie',
@@ -1450,40 +1537,34 @@ function renderMaster(){
     </div>`;
   }
 
-  // Recent transactions across all pages (all, sorted by id desc)
+  // Credit transactions only (sorted newest first)
   let allTxRows = '';
   const allTxs = [];
-  for(const p of state.pages){
+  for(const p of creditPages){
     for(const tx of p.transactions){ allTxs.push({...tx, _page:p}); }
   }
   allTxs.sort((a,b)=>b.id.localeCompare(a.id));
 
   for(const tx of allTxs){
     const p = tx._page;
-    let amt = '', catLabel2 = '';
-    if(p.type==='credit'){
-      amt = fmt(tx.amount);
-      catLabel2 = catLabel(tx.category);
-    } else {
-      amt = tx.expenses ? fmt(tx.expenses) : (tx.income ? fmt(tx.income) : '');
-      catLabel2 = tx.expenses ? t('expenses') : t('income');
-    }
-    const acctTag = `<span class="acct-tag">${p.type==='credit'?'💳':'🏦'} ${esc(p.name)}</span>`;
+    const acctTag = `<span class="acct-tag">💳 ${esc(p.name)}</span>`;
     const hi = tx.highlighted?'row-hi':'';
     allTxRows += `<tr class="${hi}">
       <td>${esc(tx.date)}</td>
       <td>${esc(tx.detail)}</td>
       <td>${acctTag}</td>
-      <td>${catLabel2}</td>
-      <td class="amt">${amt}</td>
+      <td>${catLabel(tx.category)}</td>
+      <td class="amt">${fmt(tx.amount)}</td>
     </tr>`;
   }
 
   if(!allTxRows) allTxRows = `<tr><td colspan="5" class="no-data">${t('noTx')}</td></tr>`;
 
+  const creditTxTitle = state.lang==='es' ? '💳 Transacciones de Crédito' : '💳 Credit Transactions';
+
   return `<div class="master-section-title">🏠 ${t('allAccounts')}</div>
   ${creditSummary}${debitSummary}
-  <div class="master-section-title">📋 ${t('allAccounts')} – ${t('detail')}</div>
+  <div class="master-section-title">${creditTxTitle}</div>
   <div class="card">
     <div class="table-wrap">
       <table>
@@ -2043,90 +2124,377 @@ function updateLangUI(){
 }
 
 // ═══════════════════════════════════════════════
-// DATA EXPORT / IMPORT
+// FILE SYNC  —  OneDrive / local file auto-sync
 // ═══════════════════════════════════════════════
-// Simple approach that works on every browser and device — no File System API,
-// no permissions, no IndexedDB handle juggling.
-// To sync between devices: Export → move JSON to OneDrive → Import on other device.
+//
+// How it works (desktop Chrome/Edge):
+//   1. User clicks "Connect file" → picks / creates ContaFacil.json
+//      inside their OneDrive folder.
+//   2. The FileSystemFileHandle is stored in IndexedDB so it survives
+//      page reloads (localStorage can only store strings, not handles).
+//   3. Every save() call writes the JSON to that file automatically.
+//   4. OneDrive desktop app syncs the file to the cloud.
+//   5. On the other device (phone or another laptop) the user imports
+//      the file from OneDrive — or on another desktop Chrome they just
+//      connect the same file and it loads automatically.
+//
+// Mobile (iOS Safari / Firefox — no File System Access API):
+//   Export always uses the fixed name "ContaFacil.json".
+//   On iOS, save it into the OneDrive folder via the Files sheet.
+//   On the other device, Import → pick the same file from OneDrive.
+//   The instructions in the modal walk through this step-by-step.
+//
+// Why the old version didn't auto-sync:
+//   It was fully manual — export → drag to OneDrive → import every time.
+//   No indication of which copy was newest. Easy to overwrite newer data.
 
 let previewBlob = null;
 let previewUrl  = null;
 
+// ── Does this browser support the File System Access API? ──
+const FS_SUPPORTED = ('showSaveFilePicker' in window);
+
+// ── Sync state ──
+let syncFileHandle = null;   // FileSystemFileHandle when connected
+let syncState      = 'none'; // 'none' | 'connected' | 'pending' | 'error'
+let syncLastWrite  = null;   // Date of last successful file write
+let syncFileName   = '';     // displayed filename
+
+// ── IndexedDB helpers (needed to persist file handles across sessions) ──
+function _idbOpen(){
+  return new Promise((res,rej)=>{
+    const r = indexedDB.open('ContaFacilSync',1);
+    r.onupgradeneeded = e => e.target.result.createObjectStore('kv');
+    r.onsuccess = e => res(e.target.result);
+    r.onerror   = ()=>rej(r.error);
+  });
+}
+async function idbGet(key){
+  const db = await _idbOpen();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction('kv','readonly');
+    const req = tx.objectStore('kv').get(key);
+    req.onsuccess = ()=>res(req.result);
+    req.onerror   = ()=>rej(req.error);
+  });
+}
+async function idbSet(key,val){
+  const db = await _idbOpen();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction('kv','readwrite');
+    tx.objectStore('kv').put(val,key);
+    tx.oncomplete = ()=>res();
+    tx.onerror    = ()=>rej(tx.error);
+  });
+}
+async function idbDel(key){
+  const db = await _idbOpen();
+  return new Promise((res,rej)=>{
+    const tx = db.transaction('kv','readwrite');
+    tx.objectStore('kv').delete(key);
+    tx.oncomplete = ()=>res();
+    tx.onerror    = ()=>rej(tx.error);
+  });
+}
+
+// ── Low-level file read/write ──
+async function _writeFile(handle, data){
+  const w = await handle.createWritable();
+  await w.write(JSON.stringify(data, null, 2));
+  await w.close();
+}
+async function _readFile(handle){
+  const file = await handle.getFile();
+  syncFileName = file.name;
+  return JSON.parse(await file.text());
+}
+
+// ── Connect to a file (first-time setup or changing file) ──
+async function connectSyncFile(){
+  if(!FS_SUPPORTED) return;
+  const es = state.lang==='es';
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'ContaFacil.json',
+      startIn: 'documents',
+      types: [{ description: 'ContaFácil', accept: {'application/json':['.json']} }]
+    });
+    syncFileName = (await handle.getFile()).name;
+    // Write current data into the chosen file immediately
+    await _writeFile(handle, state);
+    await idbSet('fileHandle', handle);
+    syncFileHandle = handle;
+    syncState      = 'connected';
+    syncLastWrite  = new Date();
+    updateSyncBadge();
+    openSyncModal();
+    toast(es ? '☁️ Archivo conectado — sincronización automática activada'
+             : '☁️ File connected — auto-sync is now active', 'ok');
+  } catch(e){
+    if(e.name !== 'AbortError')
+      toast((es?'Error al conectar: ':'Error connecting: ') + e.message, 'err');
+  }
+}
+
+// ── Disconnect ──
+async function disconnectSyncFile(){
+  await idbDel('fileHandle');
+  syncFileHandle = null; syncState = 'none';
+  syncLastWrite = null; syncFileName = '';
+  updateSyncBadge();
+  openSyncModal();
+}
+
+// ── Re-grant access when permission lapses (browser security requires a user gesture) ──
+async function requestSyncPermission(){
+  if(!syncFileHandle) return;
+  const es = state.lang==='es';
+  try {
+    const perm = await syncFileHandle.requestPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      // File is source of truth — load it
+      const data = await _readFile(syncFileHandle);
+      if(data && data.pages){
+        Object.assign(state, data);
+        try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+        renderAll();
+      }
+      syncState = 'connected';
+      syncLastWrite = new Date();
+    } else {
+      syncState = 'pending';
+    }
+    updateSyncBadge();
+    openSyncModal();
+  } catch(e){
+    toast((es?'Error: ':'Error: ') + e.message, 'err');
+  }
+}
+
+// ── Write to file after every save() (fire-and-forget, non-blocking) ──
+function triggerFileSync(){
+  if(syncState !== 'connected' || !syncFileHandle) return;
+  _writeFile(syncFileHandle, state)
+    .then(()=>{ syncLastWrite=new Date(); syncState='connected'; updateSyncBadge(); })
+    .catch(()=>{ syncState='error'; updateSyncBadge(); });
+}
+
+// ── On page load: restore handle from IndexedDB and check permission ──
+async function initFileSync(){
+  if(!FS_SUPPORTED) return;
+  try {
+    const handle = await idbGet('fileHandle');
+    if(!handle) return;
+    syncFileHandle = handle;
+    const perm = await handle.queryPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      // Load from file (shared source of truth between devices)
+      try {
+        const data = await _readFile(handle);
+        if(data && data.pages){
+          Object.assign(state, data);
+          try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+          renderAll();
+          updateSyncBadge();
+        }
+        syncState     = 'connected';
+        syncLastWrite = new Date();
+      } catch(e){ syncState = 'error'; }
+    } else {
+      syncState = 'pending'; // need user gesture to re-grant
+    }
+    updateSyncBadge();
+  } catch(e){ /* IndexedDB unavailable */ }
+}
+
+// ── Fallback: download JSON (mobile / non-supported browsers) ──
 function exportData(){
   const json = JSON.stringify(state, null, 2);
   const blob = new Blob([json], {type:'application/json'});
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
-  const ts   = new Date().toISOString().slice(0,10);
-  a.href = url; a.download = 'ContaFacil_'+ts+'.json'; a.click();
+  a.href = url;
+  a.download = 'ContaFacil.json';  // fixed name so it overwrites the same file in OneDrive
+  a.click();
   setTimeout(()=>URL.revokeObjectURL(url), 3000);
   const es = state.lang==='es';
-  toast(es?'✅ Datos exportados — guárdalos en OneDrive':'✅ Data exported — save to OneDrive','ok');
+  toast(es ? '✅ Descargado — guárdalo en tu carpeta OneDrive'
+           : '✅ Downloaded — save it into your OneDrive folder', 'ok');
 }
 
-function importData(){
+function importData(silent){
   const es = state.lang==='es';
   const input = document.createElement('input');
-  input.type = 'file'; input.accept = '.json,application/json';
+  input.type='file'; input.accept='.json,application/json';
   input.onchange = async ()=>{
     const file = input.files[0]; if(!file) return;
     try{
       const text = await file.text();
       const d = JSON.parse(text);
-      if(!d.pages) throw new Error('Invalid format');
+      if(!d.pages) throw new Error('bad format');
       Object.assign(state, d);
-      save(); renderAll(); updateSyncBadge(); closeModal('mSync');
-      toast(es?`✅ Importado — ${d.pages.length} cuenta(s) cargadas`:`✅ Imported — ${d.pages.length} account(s) loaded`,'ok');
-    }catch(e){
-      toast(es?'Error al leer el archivo — verifica que sea un JSON de ContaFácil':'Error reading file — must be a ContaFácil JSON','err');
+      save(); renderAll(); updateSyncBadge();
+      if(!silent) closeModal('mSync');
+      toast(es ? `✅ Cargado — ${d.pages.length} cuenta(s)`
+               : `✅ Loaded — ${d.pages.length} account(s)`, 'ok');
+    } catch(e){
+      toast(es ? 'Error: verifica que sea un archivo ContaFácil válido'
+               : 'Error: make sure this is a valid ContaFácil file', 'err');
     }
   };
   input.click();
 }
 
+// ── Sync badge (header indicator) ──
 function updateSyncBadge(){
   const dot = document.getElementById('syncDot');
   const lbl = document.getElementById('syncLabel');
   if(!dot||!lbl) return;
   const es = state.lang==='es';
-  const txCount = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
-  dot.className = 'sync-dot connected';
-  lbl.textContent = es ? '💾 '+txCount+' mov.' : '💾 '+txCount+' txn';
+  const n  = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
+  if(syncState==='connected'){
+    dot.className='sync-dot connected';
+    lbl.textContent = '☁️ '+(es ? n+' mov.' : n+' txn');
+  } else if(syncState==='pending'){
+    dot.className='sync-dot error';
+    lbl.textContent = es ? '⚠️ Reconectar' : '⚠️ Reconnect';
+  } else if(syncState==='error'){
+    dot.className='sync-dot error';
+    lbl.textContent = es ? '❌ Sync error' : '❌ Sync error';
+  } else {
+    dot.className='sync-dot off';
+    lbl.textContent = '💾 '+(es ? n+' mov.' : n+' txn');
+  }
 }
 
+// ── Sync modal ──
 function openSyncModal(){
   const es = state.lang==='es';
-  document.getElementById('mSyncTitle').textContent = es ? '📤 Exportar / Importar' : '📤 Export / Import';
-  const txCount = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
-  document.getElementById('mSyncBody').innerHTML = `
-    <div class="info-box" style="background:var(--success-light);border-left-color:var(--success);color:#14532d;margin-bottom:16px">
-      💾 ${es ? txCount+' movimiento(s) guardados en este dispositivo' : txCount+' transaction(s) saved on this device'}
-    </div>
-    <div style="font-size:13px;color:var(--gray-700);line-height:1.9;margin-bottom:16px">
-      ${es
-        ? `<b>¿Cómo pasar datos a otro dispositivo?</b><br>
-           1. En este dispositivo presiona <b>Exportar</b> — se descarga un archivo .json<br>
-           2. Mueve ese archivo a <b>OneDrive</b> (o envíalo por correo / AirDrop)<br>
-           3. En el otro dispositivo abre ContaFácil → presiona <b>Importar</b> → selecciona el archivo`
-        : `<b>How to move data to another device:</b><br>
-           1. On this device tap <b>Export</b> — a .json file downloads<br>
-           2. Move that file to <b>OneDrive</b> (or share via email / AirDrop)<br>
-           3. On the other device open ContaFácil → tap <b>Import</b> → pick the file`}
-    </div>
-    <div style="display:flex;gap:10px;flex-wrap:wrap">
-      <button class="btn btn-primary" onclick="exportData()">
-        📥 ${es?'Exportar datos':'Export data'}
-      </button>
-      <button class="btn btn-outline" onclick="importData()">
-        📤 ${es?'Importar datos':'Import data'}
-      </button>
-    </div>
-    <p style="font-size:11px;color:var(--gray-500);margin-top:14px">
-      ${es
-        ? '⚠️ Al importar, los datos de este dispositivo se reemplazarán con los del archivo.'
-        : '⚠️ Importing replaces the current data on this device with the file\'s data.'}
-    </p>`;
-  document.getElementById('mSyncClose').textContent = t('close');
+  document.getElementById('mSyncTitle').textContent = '☁️ '+(es?'Sincronización':'Sync');
+  document.getElementById('mSyncClose').textContent  = t('close');
+
+  const n = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
+  let body = '';
+
+  // ── Desktop with File System API ──
+  if(FS_SUPPORTED){
+    if(syncState==='connected'){
+      const ago = syncLastWrite
+        ? (() => {
+            const s = Math.round((Date.now()-syncLastWrite)/1000);
+            if(s < 5)  return es?'ahora mismo':'just now';
+            if(s < 60) return es?`hace ${s}s`:`${s}s ago`;
+            return es?`hace ${Math.round(s/60)}min`:`${Math.round(s/60)}min ago`;
+          })()
+        : '—';
+      body = `
+        <div class="info-box" style="background:var(--success-light);border-left-color:var(--success);color:#14532d;margin-bottom:16px;display:flex;align-items:center;gap:10px">
+          <span style="font-size:22px">☁️</span>
+          <div>
+            <b>${es?'Sincronización activa':'Auto-sync active'}</b><br>
+            <span style="font-size:12px">
+              ${es?'Archivo':'File'}: <code style="font-size:11px">${syncFileName||'ContaFacil.json'}</code><br>
+              ${es?'Último guardado':'Last saved'}: ${ago}
+            </span>
+          </div>
+        </div>
+        <p style="font-size:13px;color:var(--gray-700);line-height:1.7;margin-bottom:14px">
+          ${es
+            ? 'Cada cambio se guarda automáticamente en tu carpeta de OneDrive. El escritorio de OneDrive lo sincroniza con la nube. En el teléfono, usa <b>Importar</b> para cargar la versión más reciente.'
+            : 'Every change is automatically saved to your OneDrive folder. The OneDrive desktop app syncs it to the cloud. On your phone use <b>Import</b> to load the latest version.'}
+        </p>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-outline btn-sm" onclick="connectSyncFile()">
+            🔄 ${es?'Cambiar archivo':'Change file'}
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="disconnectSyncFile()" style="color:var(--danger)">
+            ✕ ${es?'Desconectar':'Disconnect'}
+          </button>
+        </div>`;
+    } else if(syncState==='pending'){
+      body = `
+        <div class="info-box" style="background:var(--warning-light);border-left-color:var(--warning);color:#92400e;margin-bottom:16px">
+          ⚠️ <b>${es?'Se necesita acceso al archivo':'File access needed'}</b><br>
+          <span style="font-size:12px">${es?'El navegador necesita que re-autorices el acceso al archivo de OneDrive.':'The browser needs you to re-authorize access to the OneDrive file.'}</span>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-primary" onclick="requestSyncPermission()">
+            🔓 ${es?'Re-autorizar acceso':'Re-authorize access'}
+          </button>
+          <button class="btn btn-ghost btn-sm" onclick="disconnectSyncFile()" style="color:var(--danger)">
+            ✕ ${es?'Desconectar':'Disconnect'}
+          </button>
+        </div>`;
+    } else {
+      // not connected — show setup instructions
+      body = `
+        <div style="font-size:13px;color:var(--gray-700);line-height:1.8;margin-bottom:16px">
+          <b>${es?'Sincronización automática vía OneDrive':'Automatic sync via OneDrive'}</b><br>
+          ${es
+            ? `Conecta un archivo <code>ContaFacil.json</code> dentro de tu carpeta de OneDrive. Desde ese momento cada cambio se guardará solo — sin pasos manuales.`
+            : `Connect a <code>ContaFacil.json</code> file inside your OneDrive folder. From that point every change saves automatically — no manual steps.`}
+        </div>
+        <ol style="font-size:13px;color:var(--gray-600);line-height:2;margin-bottom:16px;padding-left:18px">
+          ${es
+            ? `<li>Presiona <b>Conectar archivo OneDrive</b></li>
+               <li>Navega a tu carpeta <b>OneDrive</b></li>
+               <li>Guarda el archivo como <b>ContaFacil.json</b></li>
+               <li>¡Listo! Cada cambio se sincroniza solo 🎉</li>`
+            : `<li>Click <b>Connect OneDrive file</b></li>
+               <li>Navigate to your <b>OneDrive</b> folder</li>
+               <li>Save the file as <b>ContaFacil.json</b></li>
+               <li>Done! Every change syncs automatically 🎉</li>`}
+        </ol>
+        <button class="btn btn-primary" onclick="connectSyncFile()">
+          ☁️ ${es?'Conectar archivo OneDrive':'Connect OneDrive file'}
+        </button>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-200)">
+          <p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">${es?'O copia de seguridad manual:':'Or manual backup:'}</p>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <button class="btn btn-outline btn-sm" onclick="exportData()">📥 ${es?'Exportar JSON':'Export JSON'}</button>
+            <button class="btn btn-ghost btn-sm" onclick="importData()">📤 ${es?'Importar JSON':'Import JSON'}</button>
+          </div>
+        </div>`;
+    }
+
+  // ── Mobile / non-supported browser ──
+  } else {
+    const iosInstr = es
+      ? `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
+           <li>Presiona <b>Guardar en OneDrive</b> — se descargará <code>ContaFacil.json</code></li>
+           <li>Cuando el navegador pregunte dónde guardar, elige <b>OneDrive</b> en "Archivos"</li>
+           <li>En el otro dispositivo: abre ContaFácil → ☁️ → <b>Cargar desde OneDrive</b></li>
+           <li>Navega a OneDrive → selecciona <code>ContaFacil.json</code></li>
+         </ol>`
+      : `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
+           <li>Tap <b>Save to OneDrive</b> — downloads <code>ContaFacil.json</code></li>
+           <li>When prompted where to save, choose <b>OneDrive</b> in Files</li>
+           <li>On the other device: open ContaFácil → ☁️ → <b>Load from OneDrive</b></li>
+           <li>Navigate to OneDrive → select <code>ContaFacil.json</code></li>
+         </ol>`;
+    body = `
+      <div class="info-box" style="background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark);margin-bottom:14px;font-size:12px">
+        💡 ${es
+          ? 'La sincronización automática funciona en Chrome/Edge de escritorio. En el teléfono usa el método manual de abajo — toma 5 segundos.'
+          : 'Auto-sync works in desktop Chrome/Edge. On mobile use the manual method below — it takes 5 seconds.'}
+      </div>
+      <b style="font-size:13px">${es?'📱 Sincronizar con OneDrive (móvil):':'📱 Sync with OneDrive (mobile):'}</b>
+      ${iosInstr}
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="exportData()">
+          ☁️ ${es?'Guardar en OneDrive':'Save to OneDrive'}
+        </button>
+        <button class="btn btn-outline" onclick="importData()">
+          📂 ${es?'Cargar desde OneDrive':'Load from OneDrive'}
+        </button>
+      </div>
+      <p style="font-size:11px;color:var(--gray-500);margin-top:12px">
+        ${n} ${es?'movimiento(s) en este dispositivo.':'transaction(s) on this device.'}
+        ${es?'Al cargar se reemplazarán con los del archivo.':'Loading will replace them with the file\'s data.'}
+      </p>`;
+  }
+
+  document.getElementById('mSyncBody').innerHTML = body;
   openModal('mSync');
 }
 
@@ -2272,28 +2640,54 @@ function captureNow(){
   clearInterval(camInterval); camInterval=null;
 
   const video = document.getElementById('camVideo');
-  const canvas = document.createElement('canvas');
-  canvas.width=video.videoWidth; canvas.height=video.videoHeight;
-  canvas.getContext('2d').drawImage(video,0,0);
+  const wrap  = document.querySelector('.camera-wrap');
+  const vW = video.videoWidth,  vH = video.videoHeight;
+  const cW = wrap.offsetWidth,  cH = wrap.offsetHeight;
 
-  // Stop the camera stream immediately — user sees the freeze-frame preview
+  // ── Crop: visual guide line at 71%, but capture to 90% ──
+  // Guide-box spans top:8% to bottom:8% of camera-wrap (= 84% height).
+  // The total-guide line sits at top:75% inside the guide-box.
+  // → 8% + 75% × 84% = 71% of camera-wrap height.
+  // We show the guide at 71% so the user aligns the TOTAL there, but we
+  // capture to 90% so the store-name footer below the total is also included
+  // (e.g. "T.J.MAXX VALUES YOUR FEEDBACK!", "homegoods.com", etc.).
+  const GUIDE_FRAC   = 0.71;  // visual guide line — user aligns total here
+  const CAPTURE_FRAC = 0.90;  // actual capture boundary — grabs store footer too
+
+  // With object-fit:cover the video is scaled so min(cW/vW, cH/vH) is satisfied.
+  // We need the inverse to convert a CSS-pixel Y to a video-pixel Y.
+  const coverScale  = Math.max(cW / vW, cH / vH);
+  const rendH_css   = vH * coverScale;                    // rendered video height in CSS px
+  const offY_css    = Math.max(0, (rendH_css - cH) / 2); // CSS px cropped from top by cover
+
+  // Capture boundary → video pixels
+  const captureY_vid = Math.round((CAPTURE_FRAC * cH + offY_css) / coverScale);
+  const cropH        = Math.max(80, Math.min(captureY_vid, vH));
+
+  // Draw top cropH rows of the video frame (guide + store footer below it)
+  const canvas = document.createElement('canvas');
+  canvas.width  = vW;
+  canvas.height = cropH;
+  canvas.getContext('2d').drawImage(video, 0, 0, vW, vH, 0, 0, vW, cropH);
+
+  // Stop stream — user sees the freeze-frame preview
   if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
   if(camInterval){ clearInterval(camInterval); camInterval=null; }
   closeModal('mCamera');
 
   canvas.toBlob(blob=>{
-    // Clean up any previous preview
     if(previewUrl) URL.revokeObjectURL(previewUrl);
     previewBlob = blob;
     previewUrl  = URL.createObjectURL(blob);
     const es = state.lang==='es';
 
-    // Show PREVIEW — user must confirm before OCR starts
     document.getElementById('mReceiptTitle').textContent = es ? '📷 Vista previa' : '📷 Preview';
     document.getElementById('mReceiptBody').innerHTML = `
       <img src="${previewUrl}" style="width:100%;border-radius:8px;margin-bottom:12px;max-height:55vh;object-fit:contain">
       <p style="font-size:13px;color:var(--gray-600);text-align:center;margin:0">
-        ${es ? '¿Se ven bien el total, la tienda y la fecha?' : 'Can you clearly see the total, store and date?'}
+        ${es
+          ? '¿El total y la tienda/fecha están visibles?'
+          : 'Is the total, store and date all visible?'}
       </p>`;
     document.getElementById('mReceiptFoot').innerHTML = `
       <button class="btn btn-outline" onclick="closeModal('mReceipt');openCamera()">
@@ -2325,22 +2719,32 @@ function confirmReceiptPhoto(){
 function updateCameraLabels(){
   const es = state.lang==='es';
   const el = (id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
-  el('mCamTitle',   es?'Escanear Recibo':'Scan Receipt');
-  el('ql-sharp',    es?'Nitidez':'Sharpness');
-  el('ql-light',    es?'Iluminación':'Lighting');
-  el('ql-pos',      es?'Posición':'Position');
-  el('camHint',     es?'Coloca el recibo dentro del marco':'Place receipt within the frame');
-  el('camCancelBtn',es?'Cancelar':'Cancel');
-  el('camAutoHint', es?'El botón 📷 se activa cuando el recibo está bien enmarcado':'The 📷 button lights up when the receipt is properly framed');
+  el('mCamTitle',        es?'Escanear Recibo':'Scan Receipt');
+  el('ql-sharp',         es?'Nitidez':'Sharpness');
+  el('ql-light',         es?'Iluminación':'Lighting');
+  el('ql-pos',           es?'Posición':'Position');
+  el('camHint',          es?'Coloca el recibo dentro del marco':'Place receipt within the frame');
+  el('camCancelBtn',     es?'Cancelar':'Cancel');
+  el('camAutoHint',      es?'El botón 📷 se activa cuando el recibo está bien enmarcado':'The 📷 button lights up when the receipt is properly framed');
+  // Total guide line bilingual labels
+  const tg = document.getElementById('totalGuideLine');
+  if(tg) tg.setAttribute('data-label', es ? '← TOTAL →' : '← TOTAL →');
+  el('totalGuideHint',   es ? 'Alinea el TOTAL con esta línea 🟠' : 'Align the TOTAL with this line 🟠');
 }
 
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
-load();
+load();                                  // sync: localStorage (instant)
 if(!state.activeTab) state.activeTab='master';
 renderAll();
-updateSyncBadge(); // show transaction count in header badge
+updateSyncBadge();
+initFileSync();                          // async: restore OneDrive file handle
+
+// Register service worker (enables offline use + proper home-screen install)
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('./sw.js').catch(()=>{});
+}
 </script>
 </body>
 </html>

@@ -924,12 +924,15 @@ function parseReceiptText(text, text2=''){
   // ── STORE NAME ──
   // IMPORTANT: Harbor Freight MUST come before Lowe's in the brand scan to avoid
   // OCR garbles of product names like "Grant's" being mistaken for "Lowe's".
+  // We search fullUpperAll (both PSM4 + PSM6) so the store footer captured below
+  // the total line (e.g. "T.J.MAXX VALUES YOUR FEEDBACK!") is also checked.
   let storeName = '';
   for(const b of KNOWN_BRANDS){
-    if(fullUpper1.includes(b.toUpperCase())){ storeName = b; break; }
+    if(fullUpperAll.includes(b.toUpperCase())){ storeName = b; break; }
   }
 
-  // Tagline / URL hints (searched in PSM4 text only to reduce false positives)
+  // Tagline / URL hints — searched in ALL OCR text (PSM4 + PSM6) so store
+  // branding in the receipt footer (below the total) is caught.
   if(!storeName){
     const TAGLINE_MAP = [
       // Harbor Freight hints FIRST
@@ -938,18 +941,24 @@ function parseReceiptText(text, text2=''){
       // Home Depot hints
       ['doers','Home Depot'],['doors','Home Depot'],
       ['keedepot','Home Depot'],['homedepot','Home Depot'],['ikeedepot','Home Depot'],
+      // TJ Maxx / HomeGoods / Marshalls — footer often has these
+      ['t.j.maxx','TJ Maxx'],['tjmaxx','TJ Maxx'],['tjmaxxfeedback','TJ Maxx'],['tjx.com','TJ Maxx'],
+      ['homegoods','HomeGoods'],['home goods','HomeGoods'],['homesense','HomeSense'],
+      ['marshalls','Marshalls'],['marshallsonline','Marshalls'],
       // Other
       ["lowe's",'Lowe\'s'],['lowes.com','Lowe\'s'],
       ['bestbuy','Best Buy'],['kohls',"Kohl's"],['macys',"Macy's"],
-      ['tjmaxx','TJ Maxx'],['marshalls','Marshalls'],['samsclub',"Sam's Club"],
+      ['samsclub',"Sam's Club"],
       ['walmart','Walmart'],['wal-mart','Walmart'],['target.com','Target'],
     ];
     for(const [hint,brand] of TAGLINE_MAP){
-      if(fullUpper1.includes(hint.toUpperCase())){ storeName = brand; break; }
+      if(fullUpperAll.includes(hint.toUpperCase())){ storeName = brand; break; }
     }
   }
 
   // First clean line in the top 12 (min 5 chars to filter OCR noise)
+  // Skip lines that look like shopping-center/mall names rather than store names.
+  const MALL_WORDS = /\b(place|center|centre|plaza|mall|square|commons|village|crossing|station|landing|galleria|pavilion|promenade|marketplace|shoppes|outlets|united states)\b/i;
   if(!storeName){
     for(let i=0; i<Math.min(12,lines1.length); i++){
       const l = lines1[i];
@@ -959,6 +968,7 @@ function parseReceiptText(text, text2=''){
       if(/^\d+\s+[A-Za-z]/.test(l)) continue;
       if(/^(www\.|http|receipt|invoice|thank|order\s*#|store\s*#|#\d)/i.test(l)) continue;
       if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;
+      if(MALL_WORDS.test(l)) continue; // skip mall/center names like "HARBOR PLACE"
       const letters = (l.match(/[a-zA-Z]/g)||[]).length;
       if(letters / l.length > 0.4){
         storeName = l.replace(/[^a-zA-Z0-9\s&'.,#\-]/g,' ').trim().replace(/\s+/g,' ').slice(0,60);
@@ -1064,7 +1074,7 @@ function parseReceiptText(text, text2=''){
     function tier2(lns){
       let sub=null, tax=null;
       for(const line of lns){
-        if(!sub && /\bsub[\s\-]?t[o0]?tal\b/i.test(line)){
+        if(!sub && /\bsub\s*t[o0]?ta/i.test(line)){  // loose match handles OCR garbles like "Subtota|"
           const m=line.match(/\$?\s*([\d,]+\.\d{1,2})/); if(m) sub=parseFloat(m[1].replace(/,/g,''));
         }
         if(!tax && /\b(sales?\s+tax[a-z]?|tax[a-z]?|iva|hst|gst|vat)\b/i.test(line)
@@ -1080,10 +1090,14 @@ function parseReceiptText(text, text2=''){
 
   // Tier 3: largest dollar value in the bottom half of PSM4 text
   // (1 or 2 decimal places — OCR often drops the last digit: "143.01" → "143.0")
+  // Skip lines that mention gift cards, prizes, or survey rewards — those amounts
+  // (e.g. "$500 gift card") are not the transaction total.
+  const TIER3_SKIP = /\b(gift\s*card|win|prize|survey|feedback|chance|enter\s*code|coupon|reward)\b/i;
   if(amount===null){
     function tier3(lns){
       const half = lns.slice(Math.floor(lns.length/2));
       const amts = half
+        .filter(l=>!TIER3_SKIP.test(l))
         .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)])
         .map(m=>parseFloat(m[1].replace(/,/g,'')))
         .filter(v=>!isNaN(v) && v>0.49 && v<9999);
@@ -1124,7 +1138,7 @@ const KNOWN_BRANDS = [
   'Amazon','eBay','Best Buy',
   // Discount & apparel
   'Dollar Tree','Dollar General','Family Dollar','Five Below','Big Lots',
-  'Marshalls','TJ Maxx','Ross','Burlington','Nordstrom','Macy\'s',
+  'Marshalls','TJ Maxx','T.J.Maxx','HomeGoods','HomeSense','Ross','Burlington','Nordstrom','Macy\'s',
   'Kohl\'s','Gap','Old Navy','Banana Republic','H&M','Zara','Forever 21',
   'Nike','Adidas','Foot Locker','Rack Room','Bath & Body Works',
   'American Eagle','Hollister','Abercrombie',
@@ -2630,11 +2644,15 @@ function captureNow(){
   const vW = video.videoWidth,  vH = video.videoHeight;
   const cW = wrap.offsetWidth,  cH = wrap.offsetHeight;
 
-  // ── Crop at the orange TOTAL guide line ──
+  // ── Crop: visual guide line at 71%, but capture to 90% ──
   // Guide-box spans top:8% to bottom:8% of camera-wrap (= 84% height).
   // The total-guide line sits at top:75% inside the guide-box.
   // → 8% + 75% × 84% = 71% of camera-wrap height.
-  const GUIDE_FRAC = 0.71;
+  // We show the guide at 71% so the user aligns the TOTAL there, but we
+  // capture to 90% so the store-name footer below the total is also included
+  // (e.g. "T.J.MAXX VALUES YOUR FEEDBACK!", "homegoods.com", etc.).
+  const GUIDE_FRAC   = 0.71;  // visual guide line — user aligns total here
+  const CAPTURE_FRAC = 0.90;  // actual capture boundary — grabs store footer too
 
   // With object-fit:cover the video is scaled so min(cW/vW, cH/vH) is satisfied.
   // We need the inverse to convert a CSS-pixel Y to a video-pixel Y.
@@ -2642,11 +2660,11 @@ function captureNow(){
   const rendH_css   = vH * coverScale;                    // rendered video height in CSS px
   const offY_css    = Math.max(0, (rendH_css - cH) / 2); // CSS px cropped from top by cover
 
-  // Guide-line Y position → video pixels
-  const lineY_vid = Math.round((GUIDE_FRAC * cH + offY_css) / coverScale);
-  const cropH     = Math.max(80, Math.min(lineY_vid, vH));
+  // Capture boundary → video pixels
+  const captureY_vid = Math.round((CAPTURE_FRAC * cH + offY_css) / coverScale);
+  const cropH        = Math.max(80, Math.min(captureY_vid, vH));
 
-  // Draw only the top cropH rows of the video frame
+  // Draw top cropH rows of the video frame (guide + store footer below it)
   const canvas = document.createElement('canvas');
   canvas.width  = vW;
   canvas.height = cropH;
