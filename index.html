@@ -2321,27 +2321,37 @@ async function exportData(){
   const blob = new Blob([json], {type:'application/json'});
   const file = new File([blob], 'ContaFacil.json', {type:'application/json'});
 
-  // iOS Safari supports navigator.share({ files }) — this opens the native share
-  // sheet so the user can tap OneDrive (or Save to Files → OneDrive folder) and
-  // iOS will prompt "Replace?" on the existing ContaFacil.json.
-  if(navigator.canShare && navigator.canShare({files:[file]})){
+  // On mobile, try the Web Share API — opens the native iOS/Android share sheet
+  // so the user can pick OneDrive directly and iOS prompts "Replace?" on the
+  // existing file instead of creating ContaFacil 1.json.
+  // We skip the canShare() pre-check because it returns false for application/json
+  // on some iOS versions even though share() itself works fine.
+  if(IS_MOBILE && navigator.share){
+    // Show hint BEFORE the share sheet opens so the user knows what to tap
+    toast(es ? '📂 Elige OneDrive → toca Reemplazar'
+             : '📂 Pick OneDrive → tap Replace', 'ok', 6000);
     try{
       await navigator.share({ files:[file], title:'ContaFácil' });
       return; // user handled it from the share sheet
     } catch(e){
-      if(e.name==='AbortError') return; // user cancelled — don't fall through
-      // Any other error → fall through to <a download>
+      if(e.name==='AbortError') return; // user cancelled — nothing to do
+      // navigator.share doesn't support files on this browser → fall through to download
     }
   }
 
-  // Fallback: standard download link (desktop Chrome/Edge/Firefox, Android Chrome)
+  // Fallback: standard download link (desktop, or mobile browser without file-share support)
   const url = URL.createObjectURL(blob);
   const a   = document.createElement('a');
   a.href = url; a.download = 'ContaFacil.json';
   a.click();
   setTimeout(()=>URL.revokeObjectURL(url), 3000);
-  toast(es ? '✅ Descargado — guárdalo en tu carpeta OneDrive'
-           : '✅ Downloaded — save it into your OneDrive folder', 'ok');
+  if(IS_MOBILE){
+    toast(es ? '⬇️ Descargado — ve a Archivos → Descargas, muévelo a OneDrive y reemplaza el anterior'
+             : '⬇️ Downloaded — go to Files → Downloads, move it to OneDrive and replace the old one', 'ok', 6000);
+  } else {
+    toast(es ? '✅ Descargado — guárdalo en tu carpeta OneDrive'
+             : '✅ Downloaded — save it into your OneDrive folder', 'ok');
+  }
 }
 
 function importData(silent){
