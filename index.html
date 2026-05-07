@@ -779,18 +779,12 @@ function preprocessForOCR(file){
         }
       }
 
-      // Step 5 — Dilate 1px to thicken thin thermal-print strokes
-      // Reads from `binary` (unchanged), writes final colours to `d`.
-      // Thermal printers produce 1-2px thin strokes; Tesseract needs ≥3px.
+      // Step 5 — Write binary pixels to canvas (no dilation)
+      // Dilation was removed: it thickens strokes but smears adjacent decimal digits
+      // (e.g. "143.01" becomes "143." because the "0" merges into the dot).
       for(let y=0; y<H; y++){
         for(let x=0; x<W; x++){
-          let bw = binary[y*W+x];
-          if(bw===255){ // white pixel — check if any neighbour is black (text)
-            if(y>0   && binary[(y-1)*W+x]===0) bw=0;
-            else if(y<H-1 && binary[(y+1)*W+x]===0) bw=0;
-            else if(x>0   && binary[y*W+(x-1)]===0) bw=0;
-            else if(x<W-1 && binary[y*W+(x+1)]===0) bw=0;
-          }
+          const bw = binary[y*W+x];
           const i=(y*W+x)*4;
           d[i]=d[i+1]=d[i+2]=bw; d[i+3]=255;
         }
@@ -821,16 +815,17 @@ async function runOCR(file, onProgress){
     logger: m=>{ if(m.status==='recognizing text') onProgress(12 + Math.round(m.progress*78)); }
   });
 
-  // Attempt 1 — PSM 6: uniform block of text (handles receipt columns well)
-  await worker.setParameters({ tessedit_pageseg_mode: '6' });
-  const { data: { text: t6 } } = await worker.recognize(processed);
+  // Attempt 1 — PSM 4: single column, variable font sizes — best for thermal receipts
+  // (PSM 6 "uniform block" often picks up the payment-line amount instead of TOTAL)
+  await worker.setParameters({ tessedit_pageseg_mode: '4' });
+  const { data: { text: t4 } } = await worker.recognize(processed);
 
-  let text = t6;
-  // If we got very little back, try PSM 4 (single column, variable font sizes)
-  if(t6.replace(/\s/g,'').length < 40){
-    await worker.setParameters({ tessedit_pageseg_mode: '4' });
-    const { data: { text: t4 } } = await worker.recognize(processed);
-    text = t4.replace(/\s/g,'').length > t6.replace(/\s/g,'').length ? t4 : t6;
+  let text = t4;
+  // If PSM 4 gave very little, fall back to PSM 6 (uniform text block)
+  if(t4.replace(/\s/g,'').length < 40){
+    await worker.setParameters({ tessedit_pageseg_mode: '6' });
+    const { data: { text: t6 } } = await worker.recognize(processed);
+    text = t6.replace(/\s/g,'').length > t4.replace(/\s/g,'').length ? t6 : t4;
   }
 
   await worker.terminate();
@@ -840,23 +835,45 @@ async function runOCR(file, onProgress){
 
 function parseReceiptText(text){
   const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
+  const fullUpper = lines.join(' ').toUpperCase();
 
   // ── STORE NAME ──
-  // Scan the first 10 lines; skip phone numbers, pure digits, street addresses,
-  // separator lines, and generic receipt headers.
+  // Strategy 1: scan the full receipt text for a known brand name.
+  // Even if the header is garbled, the survey URL or footer often leaks the brand.
   let storeName = '';
-  for(let i=0; i<Math.min(10,lines.length); i++){
-    const l = lines[i];
-    if(l.length < 3) continue;
-    if(/^\d+$/.test(l)) continue;                                   // pure digits
-    if(/^\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/.test(l)) continue;  // phone number
-    if(/^\d+\s+[A-Za-z]/.test(l)) continue;                        // street address (123 Main St)
-    if(/^(www\.|http|receipt|invoice|thank|order\s*#|store\s*#|#\d)/i.test(l)) continue;
-    if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;                      // decorative separator
-    const letters = (l.match(/[a-zA-Z]/g)||[]).length;
-    if(letters / l.length > 0.4){
-      storeName = l.replace(/[^a-zA-Z0-9\s&'.,#\-]/g,' ').trim().replace(/\s+/g,' ').slice(0,60);
-      if(storeName.length > 2) break;
+  for(const b of KNOWN_BRANDS){
+    if(fullUpper.includes(b.toUpperCase())){ storeName = b; break; }
+  }
+
+  // Strategy 2: tagline / garbled URL hints
+  // (e.g. "doers" → Home Depot tagline; "keedepot" → homedepot.com survey URL garbled)
+  if(!storeName){
+    const TAGLINE_MAP = [
+      ['doers','Home Depot'],['keedepot','Home Depot'],['homedepot','Home Depot'],
+      ['ikeedepot','Home Depot'],["lowe's",'Lowe\'s'],['lowes.com','Lowe\'s'],
+      ['bestbuy','Best Buy'],['kohls',"Kohl's"],['macys',"Macy's"],
+      ['tjmaxx','TJ Maxx'],['marshalls','Marshalls'],['samsclub',"Sam's Club"],
+    ];
+    for(const [hint,brand] of TAGLINE_MAP){
+      if(fullUpper.includes(hint.toUpperCase())){ storeName = brand; break; }
+    }
+  }
+
+  // Strategy 3: first clean line in the top 10 (min 5 chars to filter OCR noise like "RSS")
+  if(!storeName){
+    for(let i=0; i<Math.min(10,lines.length); i++){
+      const l = lines[i];
+      if(l.length < 5) continue;                                      // too short = OCR noise
+      if(/^\d+$/.test(l)) continue;                                   // pure digits
+      if(/^\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/.test(l)) continue;  // phone number
+      if(/^\d+\s+[A-Za-z]/.test(l)) continue;                        // street address
+      if(/^(www\.|http|receipt|invoice|thank|order\s*#|store\s*#|#\d)/i.test(l)) continue;
+      if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;                      // separator
+      const letters = (l.match(/[a-zA-Z]/g)||[]).length;
+      if(letters / l.length > 0.4){
+        storeName = l.replace(/[^a-zA-Z0-9\s&'.,#\-]/g,' ').trim().replace(/\s+/g,' ').slice(0,60);
+        if(storeName.length > 2) break;
+      }
     }
   }
 
@@ -925,11 +942,11 @@ function parseReceiptText(text){
   }
 
   // TIER 3: largest dollar value in the BOTTOM HALF of the receipt only
-  // (the total is always in the lower portion — safer than scanning the whole receipt)
+  // Allow 1 or 2 decimal digits — OCR often drops the last digit of "143.01" → "143.0"
   if(!amount){
     const half = lines.slice(Math.floor(lines.length/2));
     const amts = half
-      .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{2})/g)])
+      .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)])
       .map(m=>parseFloat(m[1].replace(/,/g,'')))
       .filter(v=>!isNaN(v) && v>0.49 && v<9999);
     if(amts.length) amount = Math.max(...amts);
