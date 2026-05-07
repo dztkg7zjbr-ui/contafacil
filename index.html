@@ -2164,6 +2164,16 @@ let syncState      = 'none'; // 'none' | 'connected' | 'pending' | 'error'
 let syncLastWrite  = null;   // Date of last successful file write
 let syncFileName   = '';     // displayed filename
 
+// ── Periodic hard-backup state ──
+// A SECOND file, written only every 30 min — so it always lags behind the main
+// auto-save. If the main file is overwritten with bad data (accidental import,
+// corruption), the backup still holds the last good snapshot.
+let backupFileHandle = null;
+let backupFileName   = '';
+let backupGranted    = false;  // true = permission is active for this session
+let backupLastWrite  = null;   // Date of last successful backup write
+const BACKUP_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+
 // ── IndexedDB helpers (needed to persist file handles across sessions) ──
 function _idbOpen(){
   return new Promise((res,rej)=>{
@@ -2320,6 +2330,91 @@ async function initFileSync(){
     }
     updateSyncBadge();
   } catch(e){ /* IndexedDB unavailable */ }
+}
+
+// ── Hard-backup: connect a second file written every 30 min ──
+async function connectBackupFile(){
+  if(!FS_SUPPORTED) return;
+  const es = state.lang==='es';
+  try {
+    const handle = await window.showSaveFilePicker({
+      suggestedName: 'ContaFacil_backup.json',
+      startIn: 'documents',
+      types:[{ description:'ContaFácil Backup', accept:{'application/json':['.json']} }]
+    });
+    backupFileName = (await handle.getFile()).name;
+    await _writeFile(handle, state);          // initial snapshot
+    await idbSet('backupHandle', handle);
+    backupFileHandle = handle;
+    backupGranted    = true;
+    backupLastWrite  = new Date();
+    openSyncModal();
+    toast(es
+      ? `🔒 Respaldo duro activado — se guarda cada 30 min en: ${backupFileName}`
+      : `🔒 Hard backup active — saves every 30 min to: ${backupFileName}`, 'ok', 6000);
+  } catch(e){
+    if(e.name !== 'AbortError')
+      toast((es?'Error: ':'Error: ') + e.message, 'err');
+  }
+}
+
+async function disconnectBackupFile(){
+  await idbDel('backupHandle');
+  backupFileHandle = null; backupFileName = '';
+  backupGranted = false; backupLastWrite = null;
+  openSyncModal();
+}
+
+// Re-authorize backup file (called from sync modal — has user gesture)
+async function requestBackupPermission(){
+  if(!backupFileHandle) return;
+  const es = state.lang==='es';
+  try {
+    const perm = await backupFileHandle.requestPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      backupFileName = (await backupFileHandle.getFile()).name;
+      backupGranted  = true;
+      await _triggerBackup(true); // write immediately after re-auth
+      openSyncModal();
+    }
+  } catch(e){
+    toast((es?'Error: ':'Error: ') + e.message, 'err');
+  }
+}
+
+// Write backup if enough time has passed (or force=true)
+async function _triggerBackup(force){
+  if(!backupFileHandle || !backupGranted) return;
+  const now = new Date();
+  if(!force && backupLastWrite &&
+     (now - backupLastWrite) < BACKUP_INTERVAL_MS) return;
+  try {
+    await _writeFile(backupFileHandle, state);
+    backupLastWrite = now;
+    updateSyncBadge();
+  } catch(e){
+    // Permission lapsed — flag it so the modal shows re-auth
+    backupGranted = false;
+    updateSyncBadge();
+  }
+}
+
+// Restore backup handle on page load
+async function initBackupSync(){
+  if(!FS_SUPPORTED) return;
+  try {
+    const handle = await idbGet('backupHandle');
+    if(!handle) return;
+    backupFileHandle = handle;
+    const perm = await handle.queryPermission({ mode:'readwrite' });
+    if(perm === 'granted'){
+      backupFileName  = (await handle.getFile()).name;
+      backupGranted   = true;
+      await _triggerBackup(false); // write only if 30 min have elapsed
+    }
+    // If 'prompt' — backupGranted stays false; modal will show re-auth button
+    updateSyncBadge();
+  } catch(e){ /* ignore */ }
 }
 
 // ── Copy/paste sync ──
@@ -2488,7 +2583,9 @@ function importData(silent){
 }
 
 // ── Sync badge (header indicator) ──
-// ── Badge click — shortcut: if file needs re-auth, jump straight there instead of opening modal ──
+// ── Badge click ──
+// If main file needs re-auth → jump straight there (saves a tap).
+// Otherwise open the modal (backup re-auth is handled inside the modal).
 function syncBadgeClick(){
   if(syncState === 'pending' && syncFileHandle){
     requestSyncPermission();
@@ -2601,17 +2698,67 @@ function openSyncModal(){
       </div>`;
   }
 
-  // ── Section 3: File backup ──
+  // ── Section 2b: Hard backup status (only on desktop Chrome/Edge) ──
+  let hardBkp = '';
+  if(FS_SUPPORTED){
+    if(backupFileHandle && backupGranted){
+      const agoB = backupLastWrite ? (()=>{
+        const s=Math.round((Date.now()-backupLastWrite)/1000);
+        if(s<5)    return es?'ahora mismo':'just now';
+        if(s<60)   return es?`hace ${s}s`:`${s}s ago`;
+        if(s<3600) return es?`hace ${Math.round(s/60)}min`:`${Math.round(s/60)}min ago`;
+        return es?`hace ${Math.round(s/3600)}h`:`${Math.round(s/3600)}h ago`;
+      })() : '—';
+      const nextMin = backupLastWrite
+        ? Math.max(0, Math.round((BACKUP_INTERVAL_MS-(Date.now()-backupLastWrite))/60000))
+        : 0;
+      hardBkp = `
+        <div style="margin-top:8px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;padding:8px 12px">
+          <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px">
+            <div style="font-size:12px;color:#14532d;line-height:1.5">
+              🔒 <b>${es?'Respaldo duro activo':'Hard backup active'}</b> · <code style="font-size:10px">${backupFileName}</code><br>
+              <span style="font-size:11px;color:#166534">${es?'Guardado:':'Saved:'} ${agoB} · ${es?'Próximo en ~':'Next in ~'}${nextMin}min</span>
+            </div>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger);padding:2px 6px;flex-shrink:0" onclick="disconnectBackupFile()">✕</button>
+          </div>
+        </div>`;
+    } else if(backupFileHandle && !backupGranted){
+      hardBkp = `
+        <div style="margin-top:8px;background:#fef3c7;border:1px solid #fbbf24;border-radius:6px;padding:8px 12px;font-size:12px;color:#92400e">
+          <div style="margin-bottom:6px">🔒 <b>${es?'Respaldo duro necesita re-autorización':'Hard backup needs re-authorization'}</b></div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="btn btn-primary btn-sm" onclick="requestBackupPermission()">🔓 ${es?'Re-autorizar':'Re-authorize'}</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="disconnectBackupFile()">✕ ${es?'Desconectar':'Disconnect'}</button>
+          </div>
+        </div>`;
+    } else if(syncState==='connected'){
+      // Main file is up — now suggest the hard backup as next step
+      hardBkp = `
+        <div style="margin-top:8px;background:#f0f7ff;border:1px dashed #93c5fd;border-radius:6px;padding:10px 12px;display:flex;align-items:center;gap:10px">
+          <div style="font-size:12px;color:#1e40af;flex:1;line-height:1.5">
+            🔒 <b>${es?'Respaldo duro (recomendado)':'Hard backup (recommended)'}</b><br>
+            <span style="font-size:11px;color:#3b5b9e">${es
+              ? 'Un segundo archivo guardado cada 30 min — a salvo aunque el auto-guardado principal falle.'
+              : 'A second file saved every 30 min — safe even if the main auto-save is corrupted.'}</span>
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="connectBackupFile()" style="flex-shrink:0;border-color:#93c5fd;color:#1e40af;white-space:nowrap">
+            + ${es?'Añadir':'Add'}
+          </button>
+        </div>`;
+    }
+  }
+
+  // ── Section 3: Manual file backup ──
   const fileBkp = `
     <div style="border-top:1px solid var(--gray-200);padding-top:12px;margin-top:12px">
-      <span style="font-size:11px;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px">${es?'Copia de seguridad en archivo':'File backup'}</span>
+      <span style="font-size:11px;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px">${es?'Copia manual':'Manual backup'}</span>
       <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
         <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇️ ${es?'Exportar archivo':'Export file'}</button>
         <button class="btn btn-ghost btn-sm" onclick="importData()">📂 ${es?'Importar archivo':'Import file'}</button>
       </div>
     </div>`;
 
-  document.getElementById('mSyncBody').innerHTML = copyPaste + autoSave + fileBkp;
+  document.getElementById('mSyncBody').innerHTML = copyPaste + autoSave + hardBkp + fileBkp;
   openModal('mSync');
 }
 
@@ -2857,10 +3004,16 @@ load();                                  // sync: localStorage (instant)
 if(!state.activeTab) state.activeTab='master';
 renderAll();
 updateSyncBadge();
-initFileSync();                          // async: restore OneDrive file handle
+initFileSync();                          // async: restore main auto-save handle
+initBackupSync();                        // async: restore hard-backup handle
 
-// ── Periodic safety write — re-saves to file every 3 minutes even if no change event fired ──
-setInterval(()=>{ triggerFileSync(); }, 3 * 60 * 1000);
+// ── Periodic writes ──
+// Main file: every 3 min (belt-and-suspenders on top of the per-save trigger)
+// Backup file: every 30 min — intentionally lagged so it survives a bad import
+setInterval(()=>{
+  triggerFileSync();
+  _triggerBackup(false);
+}, 3 * 60 * 1000);
 
 // Register service worker (enables offline use + proper home-screen install)
 if('serviceWorker' in navigator){
