@@ -799,76 +799,93 @@ function preprocessForOCR(file){
 }
 
 // ═══════════════════════════════════════════════
-// OCR – TESSERACT
+// OCR – TESSERACT  (dual-pass PSM4 + PSM6)
 // ═══════════════════════════════════════════════
-// Tries PSM 6 first (uniform text block — best for most receipts).
-// Falls back to PSM 4 (single column, variable size) if the result looks
-// too short/garbled, then picks whichever reading produced more text.
+// PSM 4 (single column, variable font) is best for thermal receipts.
+// PSM 6 (uniform text block) catches garbled totals like "TOT PAACHASE" that
+// PSM 4 misses.  We always run both and return {t4, t6} so the parser can use
+// the strongest signal from each pass.
 async function runOCR(file, onProgress){
   onProgress(5);
   let processed;
   try{ processed = await preprocessForOCR(file); }
-  catch(e){ processed = file; } // if canvas fails, fall back to raw file
-  onProgress(12);
+  catch(e){ processed = file; }
+  onProgress(10);
 
   const worker = await Tesseract.createWorker('eng', 1, {
-    logger: m=>{ if(m.status==='recognizing text') onProgress(12 + Math.round(m.progress*78)); }
+    logger: m=>{ if(m.status==='recognizing text') onProgress(10 + Math.round(m.progress*40)); }
   });
 
-  // Attempt 1 — PSM 4: single column, variable font sizes — best for thermal receipts
-  // (PSM 6 "uniform block" often picks up the payment-line amount instead of TOTAL)
+  // Pass 1 — PSM 4: single column, variable font sizes (best for most thermal receipts)
   await worker.setParameters({ tessedit_pageseg_mode: '4' });
   const { data: { text: t4 } } = await worker.recognize(processed);
+  onProgress(55);
 
-  let text = t4;
-  // If PSM 4 gave very little, fall back to PSM 6 (uniform text block)
-  if(t4.replace(/\s/g,'').length < 40){
-    await worker.setParameters({ tessedit_pageseg_mode: '6' });
-    const { data: { text: t6 } } = await worker.recognize(processed);
-    text = t6.replace(/\s/g,'').length > t4.replace(/\s/g,'').length ? t6 : t4;
-  }
+  // Pass 2 — PSM 6: uniform text block (catches "TOT PAACHASE 107.07" and other patterns)
+  await worker.setParameters({ tessedit_pageseg_mode: '6' });
+  const { data: { text: t6 } } = await worker.recognize(processed);
 
   await worker.terminate();
   onProgress(100);
-  return text;
+  return { t4, t6 };
 }
 
-function parseReceiptText(text){
-  const lines = text.split('\n').map(l=>l.trim()).filter(Boolean);
-  const fullUpper = lines.join(' ').toUpperCase();
-
-  // ── STORE NAME ──
-  // Strategy 1: scan the full receipt text for a known brand name.
-  // Even if the header is garbled, the survey URL or footer often leaks the brand.
-  let storeName = '';
-  for(const b of KNOWN_BRANDS){
-    if(fullUpper.includes(b.toUpperCase())){ storeName = b; break; }
+// parseReceiptText(text1, text2)
+// text1 = PSM4 OCR result; text2 = PSM6 OCR result (optional but recommended).
+// We extract the best signal from each pass via a 4-tier strategy.
+function parseReceiptText(text, text2=''){
+  // ── helpers ──
+  function toLines(t){ return (t||'').split('\n').map(l=>l.trim()).filter(Boolean); }
+  function getAmounts(line){
+    return [...(line||'').matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)]
+      .map(m=>parseFloat(m[1].replace(/,/g,''))).filter(v=>v>0);
   }
 
-  // Strategy 2: tagline / garbled URL hints
-  // (e.g. "doers" → Home Depot tagline; "keedepot" → homedepot.com survey URL garbled)
+  const lines1 = toLines(text);
+  const lines2 = toLines(text2);
+  // combined text for brand/tagline scans (use only PSM4 lines to avoid right-col confusions
+  // from PSM6 that sometimes picks up product names instead of the store header)
+  const fullUpper1 = lines1.join(' ').toUpperCase();
+  const fullUpperAll = (lines1.concat(lines2)).join(' ').toUpperCase();
+
+  // ── STORE NAME ──
+  // IMPORTANT: Harbor Freight MUST come before Lowe's in the brand scan to avoid
+  // OCR garbles of product names like "Grant's" being mistaken for "Lowe's".
+  let storeName = '';
+  for(const b of KNOWN_BRANDS){
+    if(fullUpper1.includes(b.toUpperCase())){ storeName = b; break; }
+  }
+
+  // Tagline / URL hints (searched in PSM4 text only to reduce false positives)
   if(!storeName){
     const TAGLINE_MAP = [
-      ['doers','Home Depot'],['keedepot','Home Depot'],['homedepot','Home Depot'],
-      ['ikeedepot','Home Depot'],["lowe's",'Lowe\'s'],['lowes.com','Lowe\'s'],
+      // Harbor Freight hints FIRST
+      ['harbor freight','Harbor Freight'],['harborfreight','Harbor Freight'],
+      ['quality tools','Harbor Freight'],['lowest price','Harbor Freight'],
+      // Home Depot hints
+      ['doers','Home Depot'],['doors','Home Depot'],
+      ['keedepot','Home Depot'],['homedepot','Home Depot'],['ikeedepot','Home Depot'],
+      // Other
+      ["lowe's",'Lowe\'s'],['lowes.com','Lowe\'s'],
       ['bestbuy','Best Buy'],['kohls',"Kohl's"],['macys',"Macy's"],
       ['tjmaxx','TJ Maxx'],['marshalls','Marshalls'],['samsclub',"Sam's Club"],
+      ['walmart','Walmart'],['wal-mart','Walmart'],['target.com','Target'],
     ];
     for(const [hint,brand] of TAGLINE_MAP){
-      if(fullUpper.includes(hint.toUpperCase())){ storeName = brand; break; }
+      if(fullUpper1.includes(hint.toUpperCase())){ storeName = brand; break; }
     }
   }
 
-  // Strategy 3: first clean line in the top 10 (min 5 chars to filter OCR noise like "RSS")
+  // First clean line in the top 12 (min 5 chars to filter OCR noise)
   if(!storeName){
-    for(let i=0; i<Math.min(10,lines.length); i++){
-      const l = lines[i];
-      if(l.length < 5) continue;                                      // too short = OCR noise
-      if(/^\d+$/.test(l)) continue;                                   // pure digits
-      if(/^\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/.test(l)) continue;  // phone number
-      if(/^\d+\s+[A-Za-z]/.test(l)) continue;                        // street address
+    for(let i=0; i<Math.min(12,lines1.length); i++){
+      const l = lines1[i];
+      if(l.length < 5) continue;
+      if(/^\d+$/.test(l)) continue;
+      if(/^\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}/.test(l)) continue;
+      if(/^\d+\s+[A-Za-z]/.test(l)) continue;
       if(/^(www\.|http|receipt|invoice|thank|order\s*#|store\s*#|#\d)/i.test(l)) continue;
-      if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;                      // separator
+      if(/^[\*\-\=\_\#]{3,}/.test(l)) continue;
       const letters = (l.match(/[a-zA-Z]/g)||[]).length;
       if(letters / l.length > 0.4){
         storeName = l.replace(/[^a-zA-Z0-9\s&'.,#\-]/g,' ').trim().replace(/\s+/g,' ').slice(0,60);
@@ -878,78 +895,129 @@ function parseReceiptText(text){
   }
 
   // ── DATE ──
-  // Supports: MM/DD/YYYY, MM-DD-YY, Month DD YYYY, DD Month YYYY
+  // Searches both PSM4 and PSM6 lines.
+  // Year normalisation: garbled 4-digit years like "2724" → last 2 digits → 2024.
+  // O/o → 0 substitution handles common OCR misread of month digit.
   let date = '';
+  const moName = {jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',
+                  jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
+  function normalizeYear(y){
+    if(y.length===2) return '20'+y;
+    const yi=parseInt(y);
+    if(yi>=2000 && yi<=2030) return String(yi);
+    // Garbled year (e.g. "2724" → last 2 digits → "24" → 2024)
+    const last2=parseInt(y.slice(-2));
+    const fixed=2000+last2;
+    if(fixed>=2000 && fixed<=2030) return String(fixed);
+    return null;
+  }
   const dateTests = [
-    { rx:/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/, fn(m){
-        let [,a,b,y]=m; if(y.length===2) y='20'+y;
-        if(parseInt(a)>12 && parseInt(b)<=12){ [a,b]=[b,a]; } // handle DD/MM swap
-        return `${a.padStart(2,'0')}/${b.padStart(2,'0')}/${y}`;
+    // MM/DD/YYYY or MM-DD-YY — also handles leading O (OCR misread of '0')
+    { rx:/([O0o]?\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/g, fn(m){
+        let a=m[1].replace(/[Oo]/g,'0'), b=m[2], y=normalizeYear(m[3]);
+        if(!y) return null;
+        const ma=parseInt(a), mb=parseInt(b);
+        if(ma>12 && mb<=12){ [a,b]=[b,String(ma).padStart(2,'0')]; }  // DD/MM swap
+        if(parseInt(a)<1||parseInt(a)>12||parseInt(b)<1||parseInt(b)>31) return null;
+        return `${String(a).padStart(2,'0')}/${String(b).padStart(2,'0')}/${y}`;
     }},
-    { rx:/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/i, fn(m){
-        const mo={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-        return `${mo[m[1].slice(0,3).toLowerCase()]}/${m[2].padStart(2,'0')}/${m[3]}`;
+    // Month-name DD YYYY
+    { rx:/(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{1,2}),?\s+(\d{4})/gi, fn(m){
+        const y=normalizeYear(m[3]); if(!y) return null;
+        return `${moName[m[1].slice(0,3).toLowerCase()]}/${m[2].padStart(2,'0')}/${y}`;
     }},
-    { rx:/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})/i, fn(m){
-        const mo={jan:'01',feb:'02',mar:'03',apr:'04',may:'05',jun:'06',jul:'07',aug:'08',sep:'09',oct:'10',nov:'11',dec:'12'};
-        return `${mo[m[2].slice(0,3).toLowerCase()]}/${m[1].padStart(2,'0')}/${m[3]}`;
+    // DD Month-name YYYY
+    { rx:/(\d{1,2})\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+(\d{4})/gi, fn(m){
+        const y=normalizeYear(m[3]); if(!y) return null;
+        return `${moName[m[2].slice(0,3).toLowerCase()]}/${m[1].padStart(2,'0')}/${y}`;
     }},
   ];
-  outer: for(const line of lines){
+  outer: for(const line of lines1.concat(lines2)){
     for(const {rx,fn} of dateTests){
-      const m = line.match(rx); if(m){ const d=fn(m); if(d){ date=d; break outer; } }
+      rx.lastIndex=0;
+      let m;
+      while((m=rx.exec(line))!==null){
+        const d=fn(m); if(d){ date=d; break outer; }
+      }
     }
   }
 
-  // ── TOTAL AMOUNT — 3-TIER STRATEGY ──
-  // Why not just "largest number"? Discounts, individual items, auth codes and
-  // point balances can all be bigger than the real total.
+  // ── TOTAL AMOUNT — 4-TIER STRATEGY ──
   let amount = null;
 
-  // Lines that should NEVER be the total (payment detail / non-total lines)
+  // Lines that are NEVER the transaction total
   const SKIP = /\b(sub[\s\-]?total|you\s+saved|savings|discount|change|cash\s+tend|cash\s+back|cash|auth|approval|ref\s*#|account\s*#|card\s*number|terminal|acct|xxxx|membership|points|rewards|balance\s+due\s+prev|previous|open\s+item)\b/i;
-  // Lines that signal "this IS the total"
+  // Lines that explicitly label the total
   const IS_TOTAL = /\b(grand\s+total|total\s+due|amount\s+due|balance\s+due|net\s+total|sale\s+total|total\s+amount|amount\s+owed|your\s+total|total\s+sale|transaction\s+total|total)\b/i;
+  // Known Tesseract OCR garbles of the word "total"
+  const OCR_GARBLES = /\b(txol|frtel|fytel|toral|fotal|lotel|totai|tital|fotel|fotol|fotai)\b/i;
+  // Walmart "TOT PURCHASE" / "TOT PAACHASE" pattern
+  const TOT_PAT = /\btot\b/i;
 
-  // TIER 1: keyword-anchored, scan bottom-up (total is always near the bottom)
-  for(let i=lines.length-1; i>=0; i--){
-    const line = lines[i];
-    if(SKIP.test(line)) continue;
-    if(IS_TOTAL.test(line)){
-      // Grab all dollar values on this line; prefer the rightmost (that's the amount column)
-      const nums = [...line.matchAll(/\$?\s*([\d,]+\.\d{2})/g)].map(m=>parseFloat(m[1].replace(/,/g,'')));
-      if(nums.length){ amount = nums[nums.length-1]; break; }
-      // Some receipts put the amount on its own next line
-      if(i+1<lines.length){
-        const nm = lines[i+1].match(/^\$?\s*([\d,]+\.\d{2})\s*$/);
-        if(nm){ amount = parseFloat(nm[1].replace(/,/g,'')); break; }
+  // Tier 1: keyword scan — bottom-up through PSM4 lines, then PSM6 lines
+  function tier1(lns){
+    for(let i=lns.length-1; i>=0; i--){
+      const line = lns[i];
+      if(SKIP.test(line)) continue;
+      // Standard total keyword
+      if(IS_TOTAL.test(line)){
+        const nums = getAmounts(line).filter(v=>v>1);
+        if(nums.length){ return nums[nums.length-1]; }
+        if(i+1<lns.length){
+          const nm=lns[i+1].match(/^\$?\s*([\d,]+\.\d{2})\s*$/);
+          if(nm) return parseFloat(nm[1].replace(/,/g,''));
+        }
+      }
+      // OCR garble of "total"
+      if(OCR_GARBLES.test(line)){
+        const nums = getAmounts(line).filter(v=>v>1);
+        if(nums.length) return nums[nums.length-1];
+      }
+      // "TOT PURCHASE/PAACHASE" (Walmart) — only pick up if amount > $5
+      if(TOT_PAT.test(line)){
+        const nums = getAmounts(line).filter(v=>v>5);
+        if(nums.length) return Math.max(...nums);
       }
     }
+    return null;
   }
 
-  // TIER 2: SUBTOTAL + TAX math (handles OCR misreads of the word TOTAL)
-  if(!amount){
-    let sub=null, tax=null;
-    for(const line of lines){
-      if(!sub && /\bsub[\s\-]?total\b/i.test(line)){
-        const m=line.match(/\$?\s*([\d,]+\.\d{2})/); if(m) sub=parseFloat(m[1].replace(/,/g,''));
+  // Search PSM4 first, then PSM6
+  amount = tier1(lines1);
+  if(amount===null) amount = tier1(lines2);
+
+  // Tier 2: SUBTOTAL + TAX math (handles receipts where the "TOTAL" line is fully garbled)
+  if(amount===null){
+    function tier2(lns){
+      let sub=null, tax=null;
+      for(const line of lns){
+        if(!sub && /\bsub[\s\-]?t[o0]?tal\b/i.test(line)){
+          const m=line.match(/\$?\s*([\d,]+\.\d{1,2})/); if(m) sub=parseFloat(m[1].replace(/,/g,''));
+        }
+        if(!tax && /\b(sales?\s+tax[a-z]?|tax[a-z]?|iva|hst|gst|vat)\b/i.test(line)
+               && !/\bexempt|tax[\s\-]?id\b/i.test(line)){
+          const m=line.match(/\$?\s*([\d,]+\.\d{1,2})/); if(m) tax=parseFloat(m[1].replace(/,/g,''));
+        }
       }
-      if(!tax && /\b(sales?\s+tax|tax|iva|hst|gst|vat)\b/i.test(line) && !/\bexempt|tax[\s\-]?id\b/i.test(line)){
-        const m=line.match(/\$?\s*([\d,]+\.\d{2})/); if(m) tax=parseFloat(m[1].replace(/,/g,''));
-      }
+      return sub!==null ? parseFloat((sub+(tax||0)).toFixed(2)) : null;
     }
-    if(sub!==null) amount = parseFloat((sub+(tax||0)).toFixed(2));
+    amount = tier2(lines1);
+    if(amount===null) amount = tier2(lines2);
   }
 
-  // TIER 3: largest dollar value in the BOTTOM HALF of the receipt only
-  // Allow 1 or 2 decimal digits — OCR often drops the last digit of "143.01" → "143.0"
-  if(!amount){
-    const half = lines.slice(Math.floor(lines.length/2));
-    const amts = half
-      .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)])
-      .map(m=>parseFloat(m[1].replace(/,/g,'')))
-      .filter(v=>!isNaN(v) && v>0.49 && v<9999);
-    if(amts.length) amount = Math.max(...amts);
+  // Tier 3: largest dollar value in the bottom half of PSM4 text
+  // (1 or 2 decimal places — OCR often drops the last digit: "143.01" → "143.0")
+  if(amount===null){
+    function tier3(lns){
+      const half = lns.slice(Math.floor(lns.length/2));
+      const amts = half
+        .flatMap(l=>[...l.matchAll(/\$?\s*([\d]{1,4}[,\d]*\.\d{1,2})/g)])
+        .map(m=>parseFloat(m[1].replace(/,/g,'')))
+        .filter(v=>!isNaN(v) && v>0.49 && v<9999);
+      return amts.length ? Math.max(...amts) : null;
+    }
+    amount = tier3(lines1);
+    if(amount===null) amount = tier3(lines2);
   }
 
   storeName = cleanStoreName(storeName);
@@ -958,27 +1026,42 @@ function parseReceiptText(text){
 
 // ── CLEAN STORE NAME ──
 // Match against known brands first; otherwise strip store #s and generic suffixes.
+// IMPORTANT ORDERING: Harbor Freight MUST appear before Lowe's.
+// Some HF receipts have product names (e.g. "Grant's") that OCR garbles into
+// "Lowe's" — if Lowe's came first we'd misidentify those receipts.
 const KNOWN_BRANDS = [
+  // Home improvement — HF first
+  'Harbor Freight Tools','Harbor Freight',
+  'Home Depot','Lowe\'s','Lowes','IKEA',
+  // General merchandise & grocery
   'Walmart','Target','Costco',"Sam's Club",'Kroger','Publix','Whole Foods',
   'Trader Joe\'s','Aldi','Safeway','Winn-Dixie','Food Lion','H-E-B','HEB',
   'Albertsons','Meijer','Giant','Wegmans','Stop & Shop','Sprouts',
+  // Pharmacy
   'CVS','Walgreens','Rite Aid',
+  // Fast food & restaurants
   'McDonald\'s','Burger King','Wendy\'s','Taco Bell','Chick-fil-A','Subway',
   'Starbucks','Dunkin','Chipotle','KFC','Popeyes','Pizza Hut','Domino\'s',
   'Panera','IHOP','Denny\'s','Applebee\'s','Olive Garden','Outback',
   'Panda Express','Five Guys','Wingstop','Raising Cane\'s','Shake Shack',
+  // Gas & convenience
   'Shell','Exxon','Chevron','BP','Mobil','Sunoco','Marathon','Citgo',
   'Circle K','Wawa','RaceTrac','Speedway','Murphy','7-Eleven','QuikTrip',
-  'Amazon','eBay','Best Buy','Home Depot','Lowe\'s','Lowes','IKEA',
+  // Online & electronics
+  'Amazon','eBay','Best Buy',
+  // Discount & apparel
   'Dollar Tree','Dollar General','Family Dollar','Five Below','Big Lots',
   'Marshalls','TJ Maxx','Ross','Burlington','Nordstrom','Macy\'s',
   'Kohl\'s','Gap','Old Navy','Banana Republic','H&M','Zara','Forever 21',
   'Nike','Adidas','Foot Locker','Rack Room','Bath & Body Works',
   'American Eagle','Hollister','Abercrombie',
+  // Travel
   'Uber','Lyft','Airbnb','Southwest','Delta','American Airlines',
   'JetBlue','Frontier','Spirit Airlines',
+  // Subscriptions & digital
   'Netflix','Spotify','Hulu','Disney','Apple','Google','Microsoft',
   'Adobe','Dropbox','Zoom',
+  // Utilities & insurance
   'Waste Management','Republic Services',
   'GEICO','State Farm','Allstate','Progressive','Nationwide',
 ];
@@ -1706,13 +1789,13 @@ async function runReceiptOCR(){
       <div class="progress-bar"><div class="progress-fill" id="pfill" style="width:0%"></div></div>
     </div>`;
   try {
-    const text = await runOCR(ocrFile, pct=>{
+    const { t4, t6 } = await runOCR(ocrFile, pct=>{
       const fill=document.getElementById('pfill'); const pctEl=document.getElementById('pct');
       if(fill) fill.style.width=pct+'%';
       if(pctEl) pctEl.textContent=pct+'%';
     });
-    const parsed = parseReceiptText(text);
-    renderReceiptStep2(parsed, text);
+    const parsed = parseReceiptText(t4, t6);
+    renderReceiptStep2(parsed, t4);
   } catch(err){
     console.error(err);
     toast(t('errorOCR'),'err');
