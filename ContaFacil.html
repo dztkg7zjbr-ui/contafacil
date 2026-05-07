@@ -332,7 +332,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   <header class="app-header">
     <div class="app-logo">💰 ContaFácil</div>
     <div class="header-spacer"></div>
-    <div class="sync-badge" id="syncBadge" onclick="openSyncModal()" title="Exportar / Importar datos">
+    <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
       <div class="sync-dot connected" id="syncDot"></div>
       <span id="syncLabel">💾 0 mov.</span>
     </div>
@@ -2288,7 +2288,18 @@ async function initFileSync(){
   if(!FS_SUPPORTED) return;
   try {
     const handle = await idbGet('fileHandle');
-    if(!handle) return;
+    if(!handle){
+      // First-run hint: suggest connecting a backup file (once per session)
+      if(!sessionStorage.getItem('cf_file_hinted')){
+        sessionStorage.setItem('cf_file_hinted','1');
+        const es = state.lang==='es';
+        setTimeout(()=> toast(
+          es ? '💾 Tip: toca ☁️ → "Conectar archivo de respaldo" para auto-guardar tus datos'
+             : '💾 Tip: tap ☁️ → "Connect backup file" to auto-save your data', 'ok', 7000
+        ), 2500);
+      }
+      return;
+    }
     syncFileHandle = handle;
     const perm = await handle.queryPermission({ mode:'readwrite' });
     if(perm === 'granted'){
@@ -2477,6 +2488,15 @@ function importData(silent){
 }
 
 // ── Sync badge (header indicator) ──
+// ── Badge click — shortcut: if file needs re-auth, jump straight there instead of opening modal ──
+function syncBadgeClick(){
+  if(syncState === 'pending' && syncFileHandle){
+    requestSyncPermission();
+  } else {
+    openSyncModal();
+  }
+}
+
 function updateSyncBadge(){
   const dot = document.getElementById('syncDot');
   const lbl = document.getElementById('syncLabel');
@@ -2561,9 +2581,15 @@ function openSyncModal(){
     } else {
       autoSave = `
         <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:10px">
-          <b style="font-size:12px;color:var(--gray-600)">💾 ${es?'Auto-guardado en archivo (opcional)':'Auto-save to file (optional)'}</b>
-          <p style="font-size:12px;color:var(--gray-500);margin:4px 0 8px">${es?'Conecta un archivo en tu carpeta de nube y cada cambio se guarda solo.':'Connect a file in your cloud folder and every change saves automatically.'}</p>
-          <button class="btn btn-outline btn-sm" onclick="connectSyncFile()">☁️ ${es?'Conectar archivo de nube':'Connect cloud file'}</button>
+          <div style="background:#eff6ff;border:1.5px solid #bfdbfe;border-radius:8px;padding:12px 14px;display:flex;flex-direction:column;gap:8px">
+            <div style="font-size:13px;font-weight:700;color:#1e40af">💾 ${es?'Auto-guardado en archivo (recomendado)':'Auto-save to file (recommended)'}</div>
+            <div style="font-size:12px;color:#3b5b9e;line-height:1.55">${es
+              ? 'Conecta un archivo en tu carpeta de OneDrive o Documentos y cada cambio se guarda automáticamente. Si los datos del navegador se borran, puedes recuperarlos del archivo.'
+              : 'Connect a file in your OneDrive or Documents folder and every change saves automatically. If browser data is lost, you can recover from the file.'}</div>
+            <button class="btn btn-primary btn-sm" onclick="connectSyncFile()" style="align-self:flex-start">
+              ☁️ ${es?'Conectar archivo de respaldo':'Connect backup file'}
+            </button>
+          </div>
         </div>`;
     }
   } else if(!IS_MOBILE){
@@ -2832,6 +2858,9 @@ if(!state.activeTab) state.activeTab='master';
 renderAll();
 updateSyncBadge();
 initFileSync();                          // async: restore OneDrive file handle
+
+// ── Periodic safety write — re-saves to file every 3 minutes even if no change event fired ──
+setInterval(()=>{ triggerFileSync(); }, 3 * 60 * 1000);
 
 // Register service worker (enables offline use + proper home-screen install)
 if('serviceWorker' in navigator){
