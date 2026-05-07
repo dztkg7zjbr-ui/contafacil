@@ -283,13 +283,13 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 /* ── MOBILE RESPONSIVE ── */
 @media(max-width:640px){
   .main-content{padding:10px}
-  /* Fix touch-scroll: table-wrap handles only horizontal swipe;
-     vertical page scroll is handled by the browser */
+  /* touch-action:pan-x → table handles left/right swipes for categories;
+     vertical swipes are NOT handled here so they bubble up to the page */
   .table-wrap{
     overflow-x:auto;
     -webkit-overflow-scrolling:touch;
     overscroll-behavior-x:contain;
-    touch-action:pan-y;
+    touch-action:pan-x;
   }
   table{font-size:12px}
   th,td{padding:6px 7px}
@@ -1508,40 +1508,34 @@ function renderMaster(){
     </div>`;
   }
 
-  // Recent transactions across all pages (all, sorted by id desc)
+  // Credit transactions only (sorted newest first)
   let allTxRows = '';
   const allTxs = [];
-  for(const p of state.pages){
+  for(const p of creditPages){
     for(const tx of p.transactions){ allTxs.push({...tx, _page:p}); }
   }
   allTxs.sort((a,b)=>b.id.localeCompare(a.id));
 
   for(const tx of allTxs){
     const p = tx._page;
-    let amt = '', catLabel2 = '';
-    if(p.type==='credit'){
-      amt = fmt(tx.amount);
-      catLabel2 = catLabel(tx.category);
-    } else {
-      amt = tx.expenses ? fmt(tx.expenses) : (tx.income ? fmt(tx.income) : '');
-      catLabel2 = tx.expenses ? t('expenses') : t('income');
-    }
-    const acctTag = `<span class="acct-tag">${p.type==='credit'?'💳':'🏦'} ${esc(p.name)}</span>`;
+    const acctTag = `<span class="acct-tag">💳 ${esc(p.name)}</span>`;
     const hi = tx.highlighted?'row-hi':'';
     allTxRows += `<tr class="${hi}">
       <td>${esc(tx.date)}</td>
       <td>${esc(tx.detail)}</td>
       <td>${acctTag}</td>
-      <td>${catLabel2}</td>
-      <td class="amt">${amt}</td>
+      <td>${catLabel(tx.category)}</td>
+      <td class="amt">${fmt(tx.amount)}</td>
     </tr>`;
   }
 
   if(!allTxRows) allTxRows = `<tr><td colspan="5" class="no-data">${t('noTx')}</td></tr>`;
 
+  const creditTxTitle = state.lang==='es' ? '💳 Transacciones de Crédito' : '💳 Credit Transactions';
+
   return `<div class="master-section-title">🏠 ${t('allAccounts')}</div>
   ${creditSummary}${debitSummary}
-  <div class="master-section-title">📋 ${t('allAccounts')} – ${t('detail')}</div>
+  <div class="master-section-title">${creditTxTitle}</div>
   <div class="card">
     <div class="table-wrap">
       <table>
