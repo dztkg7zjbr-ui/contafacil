@@ -2154,6 +2154,10 @@ let previewUrl  = null;
 // ── Does this browser support the File System Access API? ──
 const FS_SUPPORTED = ('showSaveFilePicker' in window);
 
+// ── Is this a mobile/tablet device (vs a desktop browser that just lacks the API)? ──
+const IS_MOBILE = /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+               || (navigator.maxTouchPoints > 1 && window.screen.width < 1024);
+
 // ── Sync state ──
 let syncFileHandle = null;   // FileSystemFileHandle when connected
 let syncState      = 'none'; // 'none' | 'connected' | 'pending' | 'error'
@@ -2475,9 +2479,35 @@ function openSyncModal(){
         </div>`;
     }
 
-  // ── Mobile / non-supported browser ──
+  // ── Desktop browser without File System Access API (Safari, Firefox) ──
+  } else if(!IS_MOBILE){
+    body = `
+      <div class="info-box" style="background:#fef3c7;border-left:3px solid #d97706;color:#92400e;margin-bottom:16px;font-size:13px;padding:12px 14px;border-radius:6px">
+        <b>⚠️ ${es?'Este navegador no es compatible':'This browser is not supported'}</b><br>
+        ${es
+          ? 'Safari y Firefox no tienen la API necesaria para la sincronización automática. Abre ContaFácil en <b>Chrome</b> o <b>Edge</b> para activarla.'
+          : 'Safari and Firefox don\'t support the file sync API. Open ContaFácil in <b>Chrome</b> or <b>Edge</b> to enable auto-sync.'}
+      </div>
+      <ol style="font-size:13px;color:var(--gray-600);line-height:2.2;padding-left:18px;margin-bottom:16px">
+        <li>${es?'Descarga':'Download'} <a href="https://www.google.com/chrome/" target="_blank" style="color:var(--primary)"><b>Google Chrome</b></a> ${es?'(gratis)':'(free)'}</li>
+        <li>${es?'Abre ContaFácil en Chrome:':'Open ContaFácil in Chrome:'} <code style="font-size:11px">${location.href}</code></li>
+        <li>${es?'Toca ☁️ → <b>Conectar archivo OneDrive</b> y listo':'Tap ☁️ → <b>Connect OneDrive file</b> and you\'re set'}</li>
+      </ol>
+      <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:4px">
+        <b style="font-size:12px;color:var(--gray-500)">${es?'Mientras tanto — exportar/importar manual:':'In the meantime — manual export/import:'}</b>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
+          <button class="btn btn-outline btn-sm" onclick="exportData()">
+            ⬇️ ${es?'Exportar datos':'Export data'}
+          </button>
+          <button class="btn btn-outline btn-sm" onclick="importData()">
+            📂 ${es?'Importar datos':'Import data'}
+          </button>
+        </div>
+      </div>`;
+
+  // ── Mobile (iPhone / Android) ──
   } else {
-    const iosInstr = es
+    const mobileInstr = es
       ? `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
            <li>Presiona <b>Guardar en OneDrive</b> — se abre el menú para compartir</li>
            <li>Toca el ícono de <b>OneDrive</b> en el menú — o "Guardar en Archivos" → carpeta OneDrive</li>
@@ -2486,18 +2516,18 @@ function openSyncModal(){
          </ol>`
       : `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
            <li>Tap <b>Save to OneDrive</b> — the iOS share sheet opens</li>
-           <li>Tap the <b>OneDrive</b> icon — or "Save to Files" → OneDrive folder</li>
-           <li>If asked "Replace?" → tap <b>Replace</b> (this updates the same file, not a new one)</li>
+           <li>Tap the <b>OneDrive</b> icon — or tap "Save to Files" → OneDrive folder</li>
+           <li>If asked "Replace?" → tap <b>Replace</b> (updates the same file, not a new one)</li>
            <li>On the laptop: ContaFácil auto-syncs from the connected file 🎉</li>
          </ol>`;
     body = `
       <div class="info-box" style="background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark);margin-bottom:14px;font-size:12px">
         💡 ${es
-          ? 'La sincronización automática funciona en Chrome/Edge de escritorio. En el teléfono usa el método manual de abajo — toma 5 segundos.'
-          : 'Auto-sync works in desktop Chrome/Edge. On mobile use the manual method below — it takes 5 seconds.'}
+          ? 'La sincronización automática funciona en Chrome/Edge de escritorio. En el teléfono usa el método de abajo — toma 5 segundos.'
+          : 'Auto-sync works in desktop Chrome/Edge. On mobile use the method below — takes 5 seconds.'}
       </div>
       <b style="font-size:13px">${es?'📱 Sincronizar con OneDrive (móvil):':'📱 Sync with OneDrive (mobile):'}</b>
-      ${iosInstr}
+      ${mobileInstr}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="exportData()">
           ☁️ ${es?'Guardar en OneDrive':'Save to OneDrive'}
