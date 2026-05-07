@@ -2311,10 +2311,75 @@ async function initFileSync(){
   } catch(e){ /* IndexedDB unavailable */ }
 }
 
-// ── Export JSON — uses Web Share API on iOS so the user can save directly to
-//    OneDrive via the native share sheet (replaces the existing file instead of
-//    creating a new one in the Downloads folder).  Falls back to <a download>
-//    on desktop / Android where the File System Access API handles auto-sync anyway.
+// ── Copy/paste sync ──
+// Primary sync mechanism — works on every device.
+// On iPhone + Mac (same Apple ID) Universal Clipboard transfers it automatically.
+// On any other combo, the user copies the text and pastes it manually.
+
+async function syncCopyData(){
+  const es = state.lang==='es';
+  const json = JSON.stringify(state);
+  let copied = false;
+  try{ await navigator.clipboard.writeText(json); copied = true; }catch(e){}
+
+  if(copied){
+    toast(es
+      ? '✅ Datos copiados — abre ContaFácil en el otro dispositivo y toca "Recibir datos"'
+      : '✅ Data copied — open ContaFácil on the other device and tap "Receive data"', 'ok', 6000);
+  } else {
+    // Clipboard API blocked — show textarea for manual copy
+    const esc = json.replace(/</g,'&lt;');
+    document.getElementById('mSyncBody').innerHTML = `
+      <p style="font-size:13px;color:var(--gray-700);margin-bottom:10px">
+        ${es?'Selecciona todo y copia este texto, luego pégalo en el otro dispositivo.'
+           :'Select all and copy this text, then paste it on the other device.'}
+      </p>
+      <textarea id="syncCopyArea" rows="5" readonly onclick="this.select()"
+        style="width:100%;font-size:10px;border:1.5px solid var(--gray-300);border-radius:6px;padding:10px;resize:none;font-family:monospace">${esc}</textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary btn-sm" onclick="(()=>{const t=document.getElementById('syncCopyArea');t.select();document.execCommand('copy');})()">
+          📋 ${es?'Copiar todo':'Copy all'}
+        </button>
+        <button class="btn btn-ghost btn-sm" onclick="openSyncModal()">← ${es?'Volver':'Back'}</button>
+      </div>`;
+  }
+}
+
+function syncShowPaste(){
+  const es = state.lang==='es';
+  document.getElementById('mSyncBody').innerHTML = `
+    <p style="font-size:13px;color:var(--gray-700);margin-bottom:10px">
+      ${es?'Pega los datos que copiaste en el otro dispositivo y toca Importar.'
+         :'Paste the data you copied on the other device, then tap Import.'}
+    </p>
+    <textarea id="syncPasteArea" rows="6"
+      placeholder="${es?'Mantén presionado → Pegar':'Long-press → Paste (or Ctrl+V)'}"
+      style="width:100%;font-size:10px;border:2px dashed var(--primary);border-radius:6px;padding:10px;resize:none;font-family:monospace"></textarea>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn btn-primary" onclick="syncImportPasted()">
+        ✅ ${es?'Importar':'Import'}
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="openSyncModal()">← ${es?'Volver':'Back'}</button>
+    </div>`;
+  setTimeout(()=>{ const el=document.getElementById('syncPasteArea'); if(el) el.focus(); },150);
+}
+
+function syncImportPasted(){
+  const es = state.lang==='es';
+  const text = (document.getElementById('syncPasteArea')||{}).value||'';
+  try{
+    const d = JSON.parse(text.trim());
+    if(!d.pages) throw new Error('bad');
+    state = d;
+    save(); renderAll(); closeModal('mSync');
+    toast(es?'✅ Datos importados correctamente':'✅ Data imported successfully','ok');
+  }catch(e){
+    toast(es?'❌ Datos inválidos — asegúrate de haber copiado desde ContaFácil'
+           :'❌ Invalid data — make sure you copied from ContaFácil','err');
+  }
+}
+
+// ── Export JSON — file backup (secondary option, desktop Chrome auto-sync is primary).
 async function exportData(){
   const es   = state.lang==='es';
   const json = JSON.stringify(state, null, 2);
@@ -2402,157 +2467,91 @@ function updateSyncBadge(){
 // ── Sync modal ──
 function openSyncModal(){
   const es = state.lang==='es';
-  document.getElementById('mSyncTitle').textContent = '☁️ '+(es?'Sincronización':'Sync');
+  document.getElementById('mSyncTitle').textContent = '🔄 '+(es?'Sincronización':'Sync');
   document.getElementById('mSyncClose').textContent  = t('close');
 
-  const n = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
-  let body = '';
+  // ── Section 1: Copy / Paste — works on every device ──
+  // On iPhone + Mac (same Apple ID) Universal Clipboard transfers it automatically.
+  const copyPaste = `
+    <b style="font-size:14px">${es?'Sincronizar entre dispositivos':'Sync between devices'}</b>
+    <p style="font-size:12px;color:var(--gray-500);margin:4px 0 14px;line-height:1.6">
+      ${es
+        ? 'En iPhone + Mac funciona con el portapapeles universal — copia aquí y pega allá al instante. En cualquier otro caso, copia el texto y envíatelo por mensaje o correo.'
+        : 'On iPhone + Mac this works via Universal Clipboard — copy here, paste there instantly. Otherwise copy the text and send it to yourself via message or email.'}
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:6px">
+      <button class="btn btn-primary" style="flex-direction:column;padding:16px 8px;gap:5px;height:auto" onclick="syncCopyData()">
+        <span style="font-size:24px">📋</span>
+        <span style="font-weight:700">${es?'Copiar datos':'Copy data'}</span>
+        <span style="font-size:11px;opacity:.75;font-weight:400">${es?'desde este dispositivo':'from this device'}</span>
+      </button>
+      <button class="btn btn-outline" style="flex-direction:column;padding:16px 8px;gap:5px;height:auto;border-color:var(--primary);color:var(--primary)" onclick="syncShowPaste()">
+        <span style="font-size:24px">📥</span>
+        <span style="font-weight:700">${es?'Recibir datos':'Receive data'}</span>
+        <span style="font-size:11px;opacity:.75;font-weight:400">${es?'desde el otro dispositivo':'from the other device'}</span>
+      </button>
+    </div>`;
 
-  // ── Desktop with File System API ──
+  // ── Section 2: Auto-save status (desktop Chrome/Edge only) ──
+  let autoSave = '';
   if(FS_SUPPORTED){
     if(syncState==='connected'){
-      const ago = syncLastWrite
-        ? (() => {
-            const s = Math.round((Date.now()-syncLastWrite)/1000);
-            if(s < 5)  return es?'ahora mismo':'just now';
-            if(s < 60) return es?`hace ${s}s`:`${s}s ago`;
-            return es?`hace ${Math.round(s/60)}min`:`${Math.round(s/60)}min ago`;
-          })()
-        : '—';
-      body = `
-        <div class="info-box" style="background:var(--success-light);border-left-color:var(--success);color:#14532d;margin-bottom:16px;display:flex;align-items:center;gap:10px">
-          <span style="font-size:22px">☁️</span>
-          <div>
-            <b>${es?'Sincronización activa':'Auto-sync active'}</b><br>
-            <span style="font-size:12px">
-              ${es?'Archivo':'File'}: <code style="font-size:11px">${syncFileName||'ContaFacil.json'}</code><br>
-              ${es?'Último guardado':'Last saved'}: ${ago}
-            </span>
+      const ago = syncLastWrite ? (()=>{
+        const s=Math.round((Date.now()-syncLastWrite)/1000);
+        if(s<5)  return es?'ahora mismo':'just now';
+        if(s<60) return es?`hace ${s}s`:`${s}s ago`;
+        return es?`hace ${Math.round(s/60)}min`:`${Math.round(s/60)}min ago`;
+      })() : '—';
+      autoSave = `
+        <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:10px">
+          <div style="display:flex;align-items:center;gap:8px;background:var(--success-light);border-left:3px solid var(--success);color:#14532d;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:12px">
+            <span>✅</span>
+            <div><b>${es?'Auto-guardado activo':'Auto-save active'}</b> · <code style="font-size:11px">${syncFileName||'ContaFacil.json'}</code> · ${ago}</div>
           </div>
-        </div>
-        <p style="font-size:13px;color:var(--gray-700);line-height:1.7;margin-bottom:14px">
-          ${es
-            ? 'Cada cambio se guarda automáticamente en tu carpeta de OneDrive. El escritorio de OneDrive lo sincroniza con la nube. En el teléfono, usa <b>Importar</b> para cargar la versión más reciente.'
-            : 'Every change is automatically saved to your OneDrive folder. The OneDrive desktop app syncs it to the cloud. On your phone use <b>Import</b> to load the latest version.'}
-        </p>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-outline btn-sm" onclick="connectSyncFile()">
-            🔄 ${es?'Cambiar archivo':'Change file'}
-          </button>
-          <button class="btn btn-ghost btn-sm" onclick="disconnectSyncFile()" style="color:var(--danger)">
-            ✕ ${es?'Desconectar':'Disconnect'}
-          </button>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="connectSyncFile()">🔄 ${es?'Cambiar archivo':'Change file'}</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="disconnectSyncFile()">✕ ${es?'Desconectar':'Disconnect'}</button>
+          </div>
         </div>`;
     } else if(syncState==='pending'){
-      body = `
-        <div class="info-box" style="background:var(--warning-light);border-left-color:var(--warning);color:#92400e;margin-bottom:16px">
-          ⚠️ <b>${es?'Se necesita acceso al archivo':'File access needed'}</b><br>
-          <span style="font-size:12px">${es?'El navegador necesita que re-autorices el acceso al archivo de OneDrive.':'The browser needs you to re-authorize access to the OneDrive file.'}</span>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-primary" onclick="requestSyncPermission()">
-            🔓 ${es?'Re-autorizar acceso':'Re-authorize access'}
-          </button>
-          <button class="btn btn-ghost btn-sm" onclick="disconnectSyncFile()" style="color:var(--danger)">
-            ✕ ${es?'Desconectar':'Disconnect'}
-          </button>
-        </div>`;
-    } else {
-      // not connected — show setup instructions
-      body = `
-        <div style="font-size:13px;color:var(--gray-700);line-height:1.8;margin-bottom:16px">
-          <b>${es?'Sincronización automática vía OneDrive':'Automatic sync via OneDrive'}</b><br>
-          ${es
-            ? `Conecta un archivo <code>ContaFacil.json</code> dentro de tu carpeta de OneDrive. Desde ese momento cada cambio se guardará solo — sin pasos manuales.`
-            : `Connect a <code>ContaFacil.json</code> file inside your OneDrive folder. From that point every change saves automatically — no manual steps.`}
-        </div>
-        <ol style="font-size:13px;color:var(--gray-600);line-height:2;margin-bottom:16px;padding-left:18px">
-          ${es
-            ? `<li>Presiona <b>Conectar archivo OneDrive</b></li>
-               <li>Navega a tu carpeta <b>OneDrive</b></li>
-               <li>Guarda el archivo como <b>ContaFacil.json</b></li>
-               <li>¡Listo! Cada cambio se sincroniza solo 🎉</li>`
-            : `<li>Click <b>Connect OneDrive file</b></li>
-               <li>Navigate to your <b>OneDrive</b> folder</li>
-               <li>Save the file as <b>ContaFacil.json</b></li>
-               <li>Done! Every change syncs automatically 🎉</li>`}
-        </ol>
-        <button class="btn btn-primary" onclick="connectSyncFile()">
-          ☁️ ${es?'Conectar archivo OneDrive':'Connect OneDrive file'}
-        </button>
-        <div style="margin-top:16px;padding-top:16px;border-top:1px solid var(--gray-200)">
-          <p style="font-size:12px;color:var(--gray-500);margin-bottom:8px">${es?'O copia de seguridad manual:':'Or manual backup:'}</p>
-          <div style="display:flex;gap:8px;flex-wrap:wrap">
-            <button class="btn btn-outline btn-sm" onclick="exportData()">📥 ${es?'Exportar JSON':'Export JSON'}</button>
-            <button class="btn btn-ghost btn-sm" onclick="importData()">📤 ${es?'Importar JSON':'Import JSON'}</button>
+      autoSave = `
+        <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:10px">
+          <div style="background:var(--warning-light);border-left:3px solid var(--warning);color:#92400e;padding:8px 12px;border-radius:6px;margin-bottom:10px;font-size:12px">
+            ⚠️ <b>${es?'Archivo necesita re-autorización':'File needs re-authorization'}</b>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-primary btn-sm" onclick="requestSyncPermission()">🔓 ${es?'Re-autorizar':'Re-authorize'}</button>
+            <button class="btn btn-ghost btn-sm" style="color:var(--danger)" onclick="disconnectSyncFile()">✕ ${es?'Desconectar':'Disconnect'}</button>
           </div>
         </div>`;
+    } else {
+      autoSave = `
+        <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:10px">
+          <b style="font-size:12px;color:var(--gray-600)">💾 ${es?'Auto-guardado en archivo (opcional)':'Auto-save to file (optional)'}</b>
+          <p style="font-size:12px;color:var(--gray-500);margin:4px 0 8px">${es?'Conecta un archivo en tu carpeta de nube y cada cambio se guarda solo.':'Connect a file in your cloud folder and every change saves automatically.'}</p>
+          <button class="btn btn-outline btn-sm" onclick="connectSyncFile()">☁️ ${es?'Conectar archivo de nube':'Connect cloud file'}</button>
+        </div>`;
     }
-
-  // ── Desktop browser without File System Access API (Safari, Firefox) ──
   } else if(!IS_MOBILE){
-    body = `
-      <div class="info-box" style="background:#fef3c7;border-left:3px solid #d97706;color:#92400e;margin-bottom:16px;font-size:13px;padding:12px 14px;border-radius:6px">
-        <b>⚠️ ${es?'Este navegador no es compatible':'This browser is not supported'}</b><br>
-        ${es
-          ? 'Safari y Firefox no tienen la API necesaria para la sincronización automática. Abre ContaFácil en <b>Chrome</b> o <b>Edge</b> para activarla.'
-          : 'Safari and Firefox don\'t support the file sync API. Open ContaFácil in <b>Chrome</b> or <b>Edge</b> to enable auto-sync.'}
-      </div>
-      <ol style="font-size:13px;color:var(--gray-600);line-height:2.2;padding-left:18px;margin-bottom:16px">
-        <li>${es?'Descarga':'Download'} <a href="https://www.google.com/chrome/" target="_blank" style="color:var(--primary)"><b>Google Chrome</b></a> ${es?'(gratis)':'(free)'}</li>
-        <li>${es?'Abre ContaFácil en Chrome:':'Open ContaFácil in Chrome:'} <code style="font-size:11px">${location.href}</code></li>
-        <li>${es?'Toca ☁️ → <b>Conectar archivo OneDrive</b> y listo':'Tap ☁️ → <b>Connect OneDrive file</b> and you\'re set'}</li>
-      </ol>
-      <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:4px">
-        <b style="font-size:12px;color:var(--gray-500)">${es?'Mientras tanto — exportar/importar manual:':'In the meantime — manual export/import:'}</b>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">
-          <button class="btn btn-outline btn-sm" onclick="exportData()">
-            ⬇️ ${es?'Exportar datos':'Export data'}
-          </button>
-          <button class="btn btn-outline btn-sm" onclick="importData()">
-            📂 ${es?'Importar datos':'Import data'}
-          </button>
-        </div>
+    autoSave = `
+      <div style="border-top:1px solid var(--gray-200);padding-top:14px;margin-top:10px;font-size:12px;color:#92400e;background:#fef3c7;border-left:3px solid #d97706;padding:10px 12px;border-radius:6px">
+        ⚠️ ${es?'Para auto-guardado abre ContaFácil en':'For auto-save open ContaFácil in'}
+        <a href="https://www.google.com/chrome/" target="_blank" style="color:#92400e;font-weight:700">Chrome</a>
+        ${es?'o':'or'} <b>Edge</b>
       </div>`;
-
-  // ── Mobile (iPhone / Android) ──
-  } else {
-    const mobileInstr = es
-      ? `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
-           <li>Presiona <b>Guardar en OneDrive</b> — se abre el menú para compartir</li>
-           <li>Toca el ícono de <b>OneDrive</b> en el menú — o "Guardar en Archivos" → carpeta OneDrive</li>
-           <li>Si pregunta "¿Reemplazar?" → toca <b>Reemplazar</b> (esto actualiza el mismo archivo)</li>
-           <li>En la laptop: ContaFácil ya sincroniza solo gracias al archivo conectado 🎉</li>
-         </ol>`
-      : `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
-           <li>Tap <b>Save to OneDrive</b> — the iOS share sheet opens</li>
-           <li>Tap the <b>OneDrive</b> icon — or tap "Save to Files" → OneDrive folder</li>
-           <li>If asked "Replace?" → tap <b>Replace</b> (updates the same file, not a new one)</li>
-           <li>On the laptop: ContaFácil auto-syncs from the connected file 🎉</li>
-         </ol>`;
-    body = `
-      <div class="info-box" style="background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark);margin-bottom:14px;font-size:12px">
-        💡 ${es
-          ? 'La sincronización automática funciona en Chrome/Edge de escritorio. En el teléfono usa el método de abajo — toma 5 segundos.'
-          : 'Auto-sync works in desktop Chrome/Edge. On mobile use the method below — takes 5 seconds.'}
-      </div>
-      <b style="font-size:13px">${es?'📱 Sincronizar con OneDrive (móvil):':'📱 Sync with OneDrive (mobile):'}</b>
-      ${mobileInstr}
-      <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-primary" onclick="exportData()">
-          ☁️ ${es?'Guardar en OneDrive':'Save to OneDrive'}
-        </button>
-        <button class="btn btn-outline" onclick="importData()">
-          📂 ${es?'Cargar desde OneDrive':'Load from OneDrive'}
-        </button>
-      </div>
-      <p style="font-size:11px;color:var(--gray-500);margin-top:12px">
-        ${n} ${es?'movimiento(s) en este dispositivo.':'transaction(s) on this device.'}
-        ${es?'Al cargar se reemplazarán con los del archivo.':'Loading will replace them with the file\'s data.'}
-      </p>`;
   }
 
-  document.getElementById('mSyncBody').innerHTML = body;
+  // ── Section 3: File backup ──
+  const fileBkp = `
+    <div style="border-top:1px solid var(--gray-200);padding-top:12px;margin-top:12px">
+      <span style="font-size:11px;color:var(--gray-400);text-transform:uppercase;letter-spacing:.5px">${es?'Copia de seguridad en archivo':'File backup'}</span>
+      <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="exportData()">⬇️ ${es?'Exportar archivo':'Export file'}</button>
+        <button class="btn btn-ghost btn-sm" onclick="importData()">📂 ${es?'Importar archivo':'Import file'}</button>
+      </div>
+    </div>`;
+
+  document.getElementById('mSyncBody').innerHTML = copyPaste + autoSave + fileBkp;
   openModal('mSync');
 }
 
