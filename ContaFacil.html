@@ -2319,45 +2319,69 @@ async function initFileSync(){
 async function syncCopyData(){
   const es = state.lang==='es';
   const json = JSON.stringify(state);
-  let copied = false;
-  try{ await navigator.clipboard.writeText(json); copied = true; }catch(e){}
 
-  if(copied){
-    toast(es
-      ? '✅ Datos copiados — abre ContaFácil en el otro dispositivo y toca "Recibir datos"'
-      : '✅ Data copied — open ContaFácil on the other device and tap "Receive data"', 'ok', 6000);
-  } else {
-    // Clipboard API blocked — show textarea for manual copy
-    const esc = json.replace(/</g,'&lt;');
-    document.getElementById('mSyncBody').innerHTML = `
-      <p style="font-size:13px;color:var(--gray-700);margin-bottom:10px">
-        ${es?'Selecciona todo y copia este texto, luego pégalo en el otro dispositivo.'
-           :'Select all and copy this text, then paste it on the other device.'}
-      </p>
-      <textarea id="syncCopyArea" rows="5" readonly onclick="this.select()"
-        style="width:100%;font-size:10px;border:1.5px solid var(--gray-300);border-radius:6px;padding:10px;resize:none;font-family:monospace">${esc}</textarea>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-primary btn-sm" onclick="(()=>{const t=document.getElementById('syncCopyArea');t.select();document.execCommand('copy');})()">
-          📋 ${es?'Copiar todo':'Copy all'}
-        </button>
-        <button class="btn btn-ghost btn-sm" onclick="openSyncModal()">← ${es?'Volver':'Back'}</button>
-      </div>`;
-  }
+  // Try clipboard.writeText as a bonus convenience — but ALWAYS show the textarea
+  // because iOS clipboard sync to Mac (Universal Clipboard) is not reliable enough
+  // to depend on alone. The textarea is the guaranteed path.
+  let clipOk = false;
+  try{ await navigator.clipboard.writeText(json); clipOk = true; }catch(e){}
+
+  const esc = json.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  document.getElementById('mSyncBody').innerHTML = `
+    <p style="font-size:13px;color:var(--gray-700);margin:0 0 8px">
+      ${clipOk
+        ? (es ? '✅ Copiado al portapapeles. También puedes copiar manualmente:'
+              : '✅ Copied to clipboard. You can also copy manually below:')
+        : (es ? 'Toca el botón para copiar, luego pega en el otro dispositivo.'
+              : 'Tap the button to copy, then paste on the other device.')
+      }
+    </p>
+    <textarea id="syncCopyArea" rows="5" readonly
+      style="width:100%;font-size:10px;border:1.5px solid var(--gray-300);border-radius:6px;padding:10px;resize:none;font-family:monospace;-webkit-user-select:all;user-select:all"
+      onclick="this.select()" onfocus="this.select()">${esc}</textarea>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="(()=>{
+        const t=document.getElementById('syncCopyArea');
+        t.select();
+        const txt=t.value;
+        if(navigator.clipboard){navigator.clipboard.writeText(txt).catch(()=>{});}
+        else{document.execCommand('copy');}
+        toast('📋 ${es?'¡Copiado!':'Copied!'}','ok',2000);
+      })()">
+        📋 ${es?'Copiar todo':'Copy all'}
+      </button>
+      <button class="btn btn-ghost btn-sm" onclick="openSyncModal()">← ${es?'Volver':'Back'}</button>
+    </div>`;
+
+  // Auto-select the text so it's ready to copy with ⌘C / Ctrl+C
+  setTimeout(()=>{ const el=document.getElementById('syncCopyArea'); if(el){el.focus();el.select();} }, 200);
 }
 
 function syncShowPaste(){
   const es = state.lang==='es';
   document.getElementById('mSyncBody').innerHTML = `
     <p style="font-size:13px;color:var(--gray-700);margin-bottom:10px">
-      ${es?'Pega los datos que copiaste en el otro dispositivo y toca Importar.'
-         :'Paste the data you copied on the other device, then tap Import.'}
+      ${es?'Pega los datos copiados del otro dispositivo y toca Importar.'
+         :'Paste the data copied from the other device, then tap Import.'}
     </p>
-    <textarea id="syncPasteArea" rows="6"
-      placeholder="${es?'Mantén presionado → Pegar':'Long-press → Paste (or Ctrl+V)'}"
+    <textarea id="syncPasteArea" rows="6" autocomplete="off" autocorrect="off" spellcheck="false"
+      placeholder="${es?'Mantén presionado → Pegar':'Long-press → Paste  (or Ctrl+V / ⌘V)'}"
       style="width:100%;font-size:10px;border:2px dashed var(--primary);border-radius:6px;padding:10px;resize:none;font-family:monospace"></textarea>
-    <div style="display:flex;gap:8px;margin-top:10px">
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
       <button class="btn btn-primary" onclick="syncImportPasted()">
         ✅ ${es?'Importar':'Import'}
+      </button>
+      <button class="btn btn-outline btn-sm" onclick="(async()=>{
+        try{
+          const txt=await navigator.clipboard.readText();
+          if(txt){ document.getElementById('syncPasteArea').value=txt;
+            toast('📋 ${es?'Pegado automáticamente':'Auto-pasted'}','ok',2000); }
+          else{ toast('${es?'Portapapeles vacío':'Clipboard empty'}','err',3000); }
+        }catch(e){
+          toast('${es?'Pega manualmente (mantén presionado)':'Paste manually (long-press)'}','err',3000);
+        }
+      })()">
+        📋 ${es?'Pegar':'Paste'}
       </button>
       <button class="btn btn-ghost btn-sm" onclick="openSyncModal()">← ${es?'Volver':'Back'}</button>
     </div>`;
@@ -2367,15 +2391,25 @@ function syncShowPaste(){
 function syncImportPasted(){
   const es = state.lang==='es';
   const text = (document.getElementById('syncPasteArea')||{}).value||'';
+  if(!text.trim()){
+    toast(es ? '⚠️ El campo está vacío — pega los datos primero'
+             : '⚠️ Field is empty — paste the data first', 'err', 4000);
+    return;
+  }
   try{
     const d = JSON.parse(text.trim());
-    if(!d.pages) throw new Error('bad');
+    if(!d.pages) throw new Error('missing pages');
     state = d;
     save(); renderAll(); closeModal('mSync');
     toast(es?'✅ Datos importados correctamente':'✅ Data imported successfully','ok');
   }catch(e){
-    toast(es?'❌ Datos inválidos — asegúrate de haber copiado desde ContaFácil'
-           :'❌ Invalid data — make sure you copied from ContaFácil','err');
+    // Show a preview of what was pasted so the user can debug
+    const preview = text.trim().slice(0,50).replace(/</g,'&lt;');
+    const hint = text.trim().length < 10
+      ? (es ? 'Parece vacío o incompleto.' : 'Looks empty or incomplete.')
+      : (es ? `Vista previa: "${preview}"` : `Got: "${preview}"`);
+    toast(es ? `❌ Datos inválidos. ${hint}`
+             : `❌ Invalid data. ${hint}`, 'err', 6000);
   }
 }
 
@@ -2709,7 +2743,8 @@ function captureNow(){
   // capture to 90% so the store-name footer below the total is also included
   // (e.g. "T.J.MAXX VALUES YOUR FEEDBACK!", "homegoods.com", etc.).
   const GUIDE_FRAC   = 0.71;  // visual guide line — user aligns total here
-  const CAPTURE_FRAC = 0.90;  // actual capture boundary — grabs store footer too
+  const CAPTURE_FRAC = 1.00;  // capture the full frame — gets dates/store names
+                               // that appear in the footer below the total
 
   // With object-fit:cover the video is scaled so min(cW/vW, cH/vH) is satisfied.
   // We need the inverse to convert a CSS-pixel Y to a video-pixel Y.
