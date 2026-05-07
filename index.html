@@ -255,6 +255,61 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 .cam-divider{display:flex;align-items:center;gap:8px;margin:12px 0}
 .cam-divider-line{flex:1;height:1px;background:var(--gray-200)}
 .cam-or{font-size:12px;font-weight:600;color:var(--gray-400)}
+
+/* ── TOTAL GUIDE LINE (inside camera guide box) ── */
+.total-guide{
+  position:absolute;left:0;right:0;top:75%;
+  border-top:2.5px dashed rgba(255,120,0,.95);
+  pointer-events:none;
+}
+.total-guide::before{
+  content:'';position:absolute;left:0;right:0;
+  top:-6px;height:12px;
+  background:rgba(255,120,0,.08);
+}
+.total-guide::after{
+  content:attr(data-label);
+  position:absolute;right:6px;top:-22px;
+  background:rgba(255,120,0,.92);color:#fff;
+  font-size:10px;font-weight:800;padding:2px 7px;border-radius:3px;
+  letter-spacing:.3px;white-space:nowrap;
+}
+.total-guide-hint{
+  position:absolute;left:0;right:0;top:calc(75% + 6px);
+  text-align:center;font-size:10px;color:rgba(255,220,150,.95);
+  font-weight:600;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.7);
+}
+
+/* ── MOBILE RESPONSIVE ── */
+@media(max-width:640px){
+  .main-content{padding:10px}
+  /* Fix touch-scroll: table-wrap handles only horizontal swipe;
+     vertical page scroll is handled by the browser */
+  .table-wrap{
+    overflow-x:auto;
+    -webkit-overflow-scrolling:touch;
+    overscroll-behavior-x:contain;
+    touch-action:pan-y;
+  }
+  table{font-size:12px}
+  th,td{padding:6px 7px}
+  /* Always show row actions on touch (no hover state) */
+  .cell-actions{opacity:1!important}
+  .sum-grid{grid-template-columns:repeat(2,1fr)}
+  .page-actions{flex-wrap:wrap}
+  .card-header{flex-wrap:wrap}
+  .modal{max-height:96vh}
+  .modal-body{padding:14px 16px}
+  .modal-head{padding:14px 16px 10px}
+  .modal-foot{padding:10px 16px}
+  .camera-wrap{max-height:55vh}
+}
+@media(max-width:400px){
+  table{font-size:11px}
+  th,td{padding:5px 5px}
+  .btn-sm{padding:4px 8px;font-size:11px}
+  .cell-input.date-in{max-width:76px}
+}
 </style>
 </head>
 <body>
@@ -292,6 +347,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
           <div class="guide-corner gc-tr"></div>
           <div class="guide-corner gc-bl"></div>
           <div class="guide-corner gc-br"></div>
+          <!-- Orange guide line: user aligns the TOTAL row here -->
+          <div class="total-guide" id="totalGuideLine" data-label="TOTAL ↕"></div>
+          <div class="total-guide-hint" id="totalGuideHint">Align the TOTAL with this line 🟠</div>
         </div>
         <div class="cam-countdown" id="camCD"></div>
         <div class="cam-status">
@@ -2272,28 +2330,50 @@ function captureNow(){
   clearInterval(camInterval); camInterval=null;
 
   const video = document.getElementById('camVideo');
-  const canvas = document.createElement('canvas');
-  canvas.width=video.videoWidth; canvas.height=video.videoHeight;
-  canvas.getContext('2d').drawImage(video,0,0);
+  const wrap  = document.querySelector('.camera-wrap');
+  const vW = video.videoWidth,  vH = video.videoHeight;
+  const cW = wrap.offsetWidth,  cH = wrap.offsetHeight;
 
-  // Stop the camera stream immediately — user sees the freeze-frame preview
+  // ── Crop at the orange TOTAL guide line ──
+  // Guide-box spans top:8% to bottom:8% of camera-wrap (= 84% height).
+  // The total-guide line sits at top:75% inside the guide-box.
+  // → 8% + 75% × 84% = 71% of camera-wrap height.
+  const GUIDE_FRAC = 0.71;
+
+  // With object-fit:cover the video is scaled so min(cW/vW, cH/vH) is satisfied.
+  // We need the inverse to convert a CSS-pixel Y to a video-pixel Y.
+  const coverScale  = Math.max(cW / vW, cH / vH);
+  const rendH_css   = vH * coverScale;                    // rendered video height in CSS px
+  const offY_css    = Math.max(0, (rendH_css - cH) / 2); // CSS px cropped from top by cover
+
+  // Guide-line Y position → video pixels
+  const lineY_vid = Math.round((GUIDE_FRAC * cH + offY_css) / coverScale);
+  const cropH     = Math.max(80, Math.min(lineY_vid, vH));
+
+  // Draw only the top cropH rows of the video frame
+  const canvas = document.createElement('canvas');
+  canvas.width  = vW;
+  canvas.height = cropH;
+  canvas.getContext('2d').drawImage(video, 0, 0, vW, vH, 0, 0, vW, cropH);
+
+  // Stop stream — user sees the freeze-frame preview
   if(camStream){ camStream.getTracks().forEach(t=>t.stop()); camStream=null; }
   if(camInterval){ clearInterval(camInterval); camInterval=null; }
   closeModal('mCamera');
 
   canvas.toBlob(blob=>{
-    // Clean up any previous preview
     if(previewUrl) URL.revokeObjectURL(previewUrl);
     previewBlob = blob;
     previewUrl  = URL.createObjectURL(blob);
     const es = state.lang==='es';
 
-    // Show PREVIEW — user must confirm before OCR starts
     document.getElementById('mReceiptTitle').textContent = es ? '📷 Vista previa' : '📷 Preview';
     document.getElementById('mReceiptBody').innerHTML = `
       <img src="${previewUrl}" style="width:100%;border-radius:8px;margin-bottom:12px;max-height:55vh;object-fit:contain">
       <p style="font-size:13px;color:var(--gray-600);text-align:center;margin:0">
-        ${es ? '¿Se ven bien el total, la tienda y la fecha?' : 'Can you clearly see the total, store and date?'}
+        ${es
+          ? '¿El total y la tienda/fecha están visibles?'
+          : 'Is the total, store and date all visible?'}
       </p>`;
     document.getElementById('mReceiptFoot').innerHTML = `
       <button class="btn btn-outline" onclick="closeModal('mReceipt');openCamera()">
@@ -2325,13 +2405,17 @@ function confirmReceiptPhoto(){
 function updateCameraLabels(){
   const es = state.lang==='es';
   const el = (id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
-  el('mCamTitle',   es?'Escanear Recibo':'Scan Receipt');
-  el('ql-sharp',    es?'Nitidez':'Sharpness');
-  el('ql-light',    es?'Iluminación':'Lighting');
-  el('ql-pos',      es?'Posición':'Position');
-  el('camHint',     es?'Coloca el recibo dentro del marco':'Place receipt within the frame');
-  el('camCancelBtn',es?'Cancelar':'Cancel');
-  el('camAutoHint', es?'El botón 📷 se activa cuando el recibo está bien enmarcado':'The 📷 button lights up when the receipt is properly framed');
+  el('mCamTitle',        es?'Escanear Recibo':'Scan Receipt');
+  el('ql-sharp',         es?'Nitidez':'Sharpness');
+  el('ql-light',         es?'Iluminación':'Lighting');
+  el('ql-pos',           es?'Posición':'Position');
+  el('camHint',          es?'Coloca el recibo dentro del marco':'Place receipt within the frame');
+  el('camCancelBtn',     es?'Cancelar':'Cancel');
+  el('camAutoHint',      es?'El botón 📷 se activa cuando el recibo está bien enmarcado':'The 📷 button lights up when the receipt is properly framed');
+  // Total guide line bilingual labels
+  const tg = document.getElementById('totalGuideLine');
+  if(tg) tg.setAttribute('data-label', es ? '← TOTAL →' : '← TOTAL →');
+  el('totalGuideHint',   es ? 'Alinea el TOTAL con esta línea 🟠' : 'Align the TOTAL with this line 🟠');
 }
 
 // ═══════════════════════════════════════════════
