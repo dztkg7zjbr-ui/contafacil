@@ -2307,17 +2307,35 @@ async function initFileSync(){
   } catch(e){ /* IndexedDB unavailable */ }
 }
 
-// ── Fallback: download JSON (mobile / non-supported browsers) ──
-function exportData(){
+// ── Export JSON — uses Web Share API on iOS so the user can save directly to
+//    OneDrive via the native share sheet (replaces the existing file instead of
+//    creating a new one in the Downloads folder).  Falls back to <a download>
+//    on desktop / Android where the File System Access API handles auto-sync anyway.
+async function exportData(){
+  const es   = state.lang==='es';
   const json = JSON.stringify(state, null, 2);
   const blob = new Blob([json], {type:'application/json'});
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href = url;
-  a.download = 'ContaFacil.json';  // fixed name so it overwrites the same file in OneDrive
+  const file = new File([blob], 'ContaFacil.json', {type:'application/json'});
+
+  // iOS Safari supports navigator.share({ files }) — this opens the native share
+  // sheet so the user can tap OneDrive (or Save to Files → OneDrive folder) and
+  // iOS will prompt "Replace?" on the existing ContaFacil.json.
+  if(navigator.canShare && navigator.canShare({files:[file]})){
+    try{
+      await navigator.share({ files:[file], title:'ContaFácil' });
+      return; // user handled it from the share sheet
+    } catch(e){
+      if(e.name==='AbortError') return; // user cancelled — don't fall through
+      // Any other error → fall through to <a download>
+    }
+  }
+
+  // Fallback: standard download link (desktop Chrome/Edge/Firefox, Android Chrome)
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href = url; a.download = 'ContaFacil.json';
   a.click();
   setTimeout(()=>URL.revokeObjectURL(url), 3000);
-  const es = state.lang==='es';
   toast(es ? '✅ Descargado — guárdalo en tu carpeta OneDrive'
            : '✅ Downloaded — save it into your OneDrive folder', 'ok');
 }
@@ -2461,16 +2479,16 @@ function openSyncModal(){
   } else {
     const iosInstr = es
       ? `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
-           <li>Presiona <b>Guardar en OneDrive</b> — se descargará <code>ContaFacil.json</code></li>
-           <li>Cuando el navegador pregunte dónde guardar, elige <b>OneDrive</b> en "Archivos"</li>
-           <li>En el otro dispositivo: abre ContaFácil → ☁️ → <b>Cargar desde OneDrive</b></li>
-           <li>Navega a OneDrive → selecciona <code>ContaFacil.json</code></li>
+           <li>Presiona <b>Guardar en OneDrive</b> — se abre el menú para compartir</li>
+           <li>Toca el ícono de <b>OneDrive</b> en el menú — o "Guardar en Archivos" → carpeta OneDrive</li>
+           <li>Si pregunta "¿Reemplazar?" → toca <b>Reemplazar</b> (esto actualiza el mismo archivo)</li>
+           <li>En la laptop: ContaFácil ya sincroniza solo gracias al archivo conectado 🎉</li>
          </ol>`
       : `<ol style="font-size:13px;color:var(--gray-600);line-height:2;padding-left:18px;margin-bottom:16px">
-           <li>Tap <b>Save to OneDrive</b> — downloads <code>ContaFacil.json</code></li>
-           <li>When prompted where to save, choose <b>OneDrive</b> in Files</li>
-           <li>On the other device: open ContaFácil → ☁️ → <b>Load from OneDrive</b></li>
-           <li>Navigate to OneDrive → select <code>ContaFacil.json</code></li>
+           <li>Tap <b>Save to OneDrive</b> — the iOS share sheet opens</li>
+           <li>Tap the <b>OneDrive</b> icon — or "Save to Files" → OneDrive folder</li>
+           <li>If asked "Replace?" → tap <b>Replace</b> (this updates the same file, not a new one)</li>
+           <li>On the laptop: ContaFácil auto-syncs from the connected file 🎉</li>
          </ol>`;
     body = `
       <div class="info-box" style="background:var(--primary-light);border-left-color:var(--primary);color:var(--primary-dark);margin-bottom:14px;font-size:12px">
