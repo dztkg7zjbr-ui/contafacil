@@ -492,6 +492,36 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<!-- MODAL: Add/Edit Bill -->
+<div class="overlay" id="mBill">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="mBillTitle">Agregar pago</div>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('mBill')">✕</button>
+  </div>
+  <div class="modal-body" id="mBillBody"></div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal('mBill')">Cancelar</button>
+    <button class="btn btn-primary" onclick="saveBill()">Guardar</button>
+  </div>
+</div>
+</div>
+
+<!-- MODAL: Card APR / Due Dates setup -->
+<div class="overlay" id="mCardSetup">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="mCardSetupTitle">Configurar tarjeta</div>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('mCardSetup')">✕</button>
+  </div>
+  <div class="modal-body" id="mCardSetupBody"></div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal('mCardSetup')">Cancelar</button>
+    <button class="btn btn-primary" id="mCardSetupSave">Guardar</button>
+  </div>
+</div>
+</div>
+
 <script>
 // ═══════════════════════════════════════════════
 // CONSTANTS
@@ -706,10 +736,12 @@ let state = {
   lang: 'es',
   pages: [],        // [{id, name, type:'credit'|'debit', startBalance:0, transactions:[]}]
   activeTab: 'master', // page id or 'master'
+  bills: [],        // [{id, name, dueDay, amount, autopay, notes}]
 };
 let pendingConfirm = null;
 let editingTxId = null;
 let editingPageId = null;
+let editingBillId = null;
 let selectedNewType = null;
 let ocrFile = null;
 let pdfFile = null;
@@ -1270,8 +1302,22 @@ function renderAll(){ renderTabs(); renderContent(); updateLangUI(); }
 
 function renderTabs(){
   const bar = document.getElementById('tabBar');
+  const es = state.lang==='es';
   let html = `<div class="tab-item ${state.activeTab==='master'?'active':''}" onclick="switchTab('master')">
     🏠 <span>${t('master')}</span><span class="tab-badge badge-master">${state.pages.length}</span>
+  </div>`;
+  // Special tabs: Calendar (always), Cards (only if credit pages exist), Business (always)
+  html += `<div class="tab-item ${state.activeTab==='calendar'?'active':''}" onclick="switchTab('calendar')">
+    📅 <span>${es?'Pagos':'Calendar'}</span>
+  </div>`;
+  const hasCreditPages = state.pages.some(p=>p.type==='credit');
+  if(hasCreditPages){
+    html += `<div class="tab-item ${state.activeTab==='cards'?'active':''}" onclick="switchTab('cards')">
+      💳 <span>${es?'Tarjetas':'Cards'}</span>
+    </div>`;
+  }
+  html += `<div class="tab-item ${state.activeTab==='business'?'active':''}" onclick="switchTab('business')">
+    🏢 <span>${es?'Negocio':'Business'}</span>
   </div>`;
   for(const p of state.pages){
     const active = state.activeTab===p.id ? 'active' : '';
@@ -1289,6 +1335,9 @@ function renderTabs(){
 
 function renderContent(){
   const main = document.getElementById('mainContent');
+  if(state.activeTab==='calendar'){ main.innerHTML = renderCalendar(); return; }
+  if(state.activeTab==='cards')   { main.innerHTML = renderCards();    return; }
+  if(state.activeTab==='business'){ main.innerHTML = renderBusiness(); return; }
   if(state.pages.length===0){ main.innerHTML = renderEmpty(); return; }
   if(state.activeTab==='master'){ main.innerHTML = renderMaster(); return; }
   const page = activePage();
@@ -1325,16 +1374,88 @@ function renderPageHeader(page){
 
 // ── CREDIT PAGE ──
 function renderCredit(page){
+  const es = state.lang==='es';
   const cats = CREDIT_CATS;
   const catTotals = {};
   cats.forEach(c=>{ catTotals[c.id]=0; });
   let totalAll = 0;
+  let totalPayments = 0;
+
+  // Balance strip
+  const bal    = computeCreditBalance(page);
+  const limit  = page.limit || null;
+  const avail  = limit ? Math.max(0, limit - bal) : null;
+  const utilPct = limit ? Math.min(100, Math.round(bal/limit*100)) : null;
+  const utilColor = utilPct===null ? 'var(--gray-400)' : utilPct>=90 ? '#dc2626' : utilPct>=70 ? '#f59e0b' : '#16a34a';
+
+  const balStrip = `
+    <div class="card" style="margin-bottom:10px;padding:12px 16px">
+      <div style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between">
+        <div style="display:flex;flex-wrap:wrap;gap:16px">
+          <div>
+            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px">${es?'Saldo Actual':'Current Balance'}</div>
+            <div style="font-size:22px;font-weight:800;color:${bal>0?'#dc2626':'#16a34a'}">${fmt(bal)}</div>
+          </div>
+          ${limit ? `
+          <div>
+            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px">${es?'Disponible':'Available'}</div>
+            <div style="font-size:22px;font-weight:800;color:#16a34a">${fmt(avail)}</div>
+          </div>
+          <div>
+            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px">${es?'Límite':'Limit'}</div>
+            <div style="font-size:16px;font-weight:600;color:var(--gray-700)">${fmt(limit)}</div>
+            ${utilPct!==null ? `<div style="margin-top:4px;height:6px;background:var(--gray-200);border-radius:3px;width:80px">
+              <div style="height:6px;background:${utilColor};border-radius:3px;width:${utilPct}%"></div>
+            </div>
+            <div style="font-size:10px;color:${utilColor};font-weight:600">${utilPct}% ${es?'utilizado':'used'}</div>` : ''}
+          </div>` : ''}
+          ${page.apr ? `
+          <div>
+            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px">APR</div>
+            <div style="font-size:16px;font-weight:700;color:var(--gray-800)">${page.apr}%</div>
+            ${page.promoApr && page.promoExpiry ? `<div style="font-size:10px;color:#9333ea;font-weight:600">🏷 ${es?'Promo hasta':'Promo until'} ${page.promoExpiry}</div>` : ''}
+          </div>` : ''}
+          ${page.paymentDueDay ? `
+          <div>
+            <div style="font-size:11px;color:var(--gray-500);text-transform:uppercase;letter-spacing:.4px">${es?'Pago vence':'Payment due'}</div>
+            <div style="font-size:16px;font-weight:600;color:var(--gray-800)">${es?`Día ${page.paymentDueDay}`:`Day ${page.paymentDueDay}`}</div>
+            ${page.autopay ? `<div style="font-size:10px;color:#16a34a;font-weight:600">✓ ${es?'Autopago':'Autopay'}</div>` : `<div style="font-size:10px;color:#b45309;font-weight:600">⚠ ${es?'Manual':'Manual'}</div>`}
+          </div>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px">
+          <button class="btn btn-outline btn-sm" onclick="setCreditBalance('${page.id}')">💰 ${es?'Saldo':'Balance'}</button>
+          <button class="btn btn-outline btn-sm" onclick="setCreditLimit('${page.id}')">📊 ${es?'Límite':'Limit'}</button>
+          <button class="btn btn-outline btn-sm" onclick="openCardApr('${page.id}')">% APR</button>
+          <button class="btn btn-outline btn-sm" onclick="openCardDueDates('${page.id}')">📅 ${es?'Fechas':'Dates'}</button>
+        </div>
+      </div>
+    </div>`;
 
   let rows = '';
+  const numCols = 4 + cats.length;
   if(page.transactions.length===0){
-    rows = `<tr><td colspan="${4+cats.length}" class="no-data">${t('noTx')}</td></tr>`;
+    rows = `<tr><td colspan="${numCols}" class="no-data">${t('noTx')}</td></tr>`;
   } else {
     for(const tx of page.transactions){
+      const isPay = tx.txType==='payment';
+      if(isPay){
+        totalPayments += (tx.amount||0);
+        rows += `<tr style="background:#f0fdf4" data-txid="${tx.id}">
+          <td><input class="cell-input date-in" value="${esc(tx.date)}" onchange="updateTxField('${page.id}','${tx.id}','date',this.value)"></td>
+          <td colspan="${cats.length+1}" style="color:#16a34a;font-weight:600">
+            <span>💚 ${es?'Pago':'Payment'}</span>
+            ${tx.detail ? ` — <input class="cell-input" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:120px;color:#16a34a">` : ''}
+          </td>
+          <td class="amt" style="color:#16a34a;font-weight:700">-${fmt(tx.amount)}</td>
+          <td>
+            <div class="cell-actions">
+              <button class="btn btn-xs btn-outline" onclick="openEditTx('${page.id}','${tx.id}')">${t('editRow')}</button>
+              <button class="btn btn-xs btn-danger" onclick="askDeleteTx('${page.id}','${tx.id}')">${t('deleteRow')}</button>
+            </div>
+          </td>
+        </tr>`;
+        continue;
+      }
       const hi = tx.highlighted ? 'row-hi' : '';
       let catCells = '';
       for(const c of cats){
@@ -1380,7 +1501,7 @@ function renderCredit(page){
     `</div>`;
   }
 
-  return renderPageHeader(page) + summaryHTML + `
+  return renderPageHeader(page) + balStrip + summaryHTML + `
   <div class="card">
     <div class="table-wrap">
       <table>
@@ -1588,7 +1709,16 @@ function attachInlineListeners(page){
 // ═══════════════════════════════════════════════
 // PAGE ACTIONS
 // ═══════════════════════════════════════════════
-function switchTab(id){ state.activeTab=id; save(); renderAll(); }
+function switchTab(id){
+  // Special tabs don't require a matching page
+  const SPECIAL = ['master','calendar','cards','business'];
+  if(SPECIAL.includes(id) || state.pages.find(p=>p.id===id)){
+    state.activeTab = id;
+  } else {
+    state.activeTab = 'master';
+  }
+  save(); renderAll();
+}
 
 function openCreatePage(){
   selectedNewType = null;
@@ -1726,10 +1856,34 @@ function buildTxForm(page, tx){
   const today = new Date();
   const todayStr = `${String(today.getMonth()+1).padStart(2,'0')}/${String(today.getDate()).padStart(2,'0')}/${today.getFullYear()}`;
 
+  const es = state.lang==='es';
   let body = '';
+  const bizToggle = `
+    <div class="fg" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200)">
+      <label style="display:flex;align-items:center;gap:10px;cursor:pointer">
+        <input type="checkbox" id="tx-business" ${tx&&tx.business?'checked':''} style="width:18px;height:18px;accent-color:var(--primary)">
+        <div>
+          <div style="font-weight:600;font-size:13px">🏢 ${es?'Transacción de negocio':'Business transaction'}</div>
+          <div style="font-size:11px;color:var(--gray-500)">${es?'Se registra en esta cuenta y en la sección Negocio':'Logged here and in the Business section'}</div>
+        </div>
+      </label>
+    </div>`;
   if(page.type==='credit'){
     const catOpts = CREDIT_CATS.map(c=>`<option value="${c.id}" ${(tx&&tx.category===c.id)?'selected':''}>${state.lang==='es'?c.es:c.en}</option>`).join('');
     body = `
+    <div class="fg">
+      <label>${es?'Tipo':'Type'}</label>
+      <div style="display:flex;gap:12px;margin-top:2px">
+        <label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:500">
+          <input type="radio" name="tx-type-r" value="purchase" ${!tx||tx.txType!=='payment'?'checked':''} style="accent-color:var(--primary)">
+          ${es?'Compra / Cargo':'Purchase / Charge'}
+        </label>
+        <label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:500;color:#16a34a">
+          <input type="radio" name="tx-type-r" value="payment" ${tx&&tx.txType==='payment'?'checked':''} style="accent-color:#16a34a">
+          💚 ${es?'Pago a tarjeta':'Card Payment'}
+        </label>
+      </div>
+    </div>
     <div class="form-row">
       <div class="fg"><label>${t('date')}</label><input class="fc" id="tx-date" type="text" placeholder="MM/DD/AAAA" value="${esc(tx?tx.date:todayStr)}"></div>
       <div class="fg"><label>${t('amount')}</label><input class="fc" id="tx-amount" type="number" min="0" step="0.01" placeholder="0.00" value="${tx?(tx.amount||''):''}"></div>
@@ -1740,7 +1894,7 @@ function buildTxForm(page, tx){
         ${catOpts}
       </select>
     </div>
-    <div class="fg"><label>${t('notes')} <small style="font-weight:400;text-transform:none;letter-spacing:0">${t('optional')}</small></label><input class="fc" id="tx-notes" type="text" value="${esc(tx?(tx.notes||''):'')}">`+ `</div>`;
+    <div class="fg"><label>${t('notes')} <small style="font-weight:400;text-transform:none;letter-spacing:0">${t('optional')}</small></label><input class="fc" id="tx-notes" type="text" value="${esc(tx?(tx.notes||''):'')}">`+ `</div>` + bizToggle;
   } else {
     body = `
     <div class="form-row">
@@ -1752,7 +1906,7 @@ function buildTxForm(page, tx){
       <div class="fg"><label>${t('expenses')}</label><input class="fc" id="tx-exp" type="number" min="0" step="0.01" placeholder="0.00" value="${tx?(tx.expenses||''):''}"></div>
       <div class="fg"><label>${t('income')}</label><input class="fc" id="tx-inc" type="number" min="0" step="0.01" placeholder="0.00" value="${tx?(tx.income||''):''}"></div>
     </div>
-    <div class="fg"><label>${t('notes')} <small style="font-weight:400;text-transform:none;letter-spacing:0">${t('optional')}</small></label><input class="fc" id="tx-notes" type="text" value="${esc(tx?(tx.notes||''):'')}">`+ `</div>`;
+    <div class="fg"><label>${t('notes')} <small style="font-weight:400;text-transform:none;letter-spacing:0">${t('optional')}</small></label><input class="fc" id="tx-notes" type="text" value="${esc(tx?(tx.notes||''):'')}">`+ `</div>` + bizToggle;
   }
   document.getElementById('mTxBody').innerHTML = body;
   // focus first field
@@ -1766,18 +1920,21 @@ function saveTx(){
   const date = document.getElementById('tx-date')?.value.trim()||'';
   const detail = document.getElementById('tx-detail')?.value.trim()||'';
   const notes = document.getElementById('tx-notes')?.value.trim()||'';
+  const isBusiness = document.getElementById('tx-business')?.checked||false;
 
   if(!detail){ toast(state.lang==='es'?'Escribe una descripción.':'Enter a description.','warn'); return; }
 
   if(p.type==='credit'){
     const amount = parseAmt(document.getElementById('tx-amount')?.value)||0;
-    const category = document.getElementById('tx-cat')?.value||'OTROS';
+    const txTypeEl = document.querySelector('input[name="tx-type-r"]:checked');
+    const txType = txTypeEl ? txTypeEl.value : 'purchase';
+    const category = txType==='payment' ? 'PAGOS' : (document.getElementById('tx-cat')?.value||'OTROS');
     if(!amount){ toast(state.lang==='es'?'Ingresa un monto válido.':'Enter a valid amount.','warn'); return; }
     if(editingTxId){
       const tx = p.transactions.find(x=>x.id===editingTxId);
-      if(tx){ Object.assign(tx,{date,detail,amount,category,notes}); }
+      if(tx){ Object.assign(tx,{date,detail,amount,category,notes,business:isBusiness,txType}); }
     } else {
-      p.transactions.push({id:uid(),date,detail,amount,category,notes,highlighted:false});
+      p.transactions.push({id:uid(),date,detail,amount,category,notes,highlighted:false,business:isBusiness,txType});
     }
   } else {
     const expenses = parseAmt(document.getElementById('tx-exp')?.value)||null;
@@ -1786,9 +1943,9 @@ function saveTx(){
     if(!expenses && !income){ toast(state.lang==='es'?'Ingresa un egreso o ingreso.':'Enter an expense or income.','warn'); return; }
     if(editingTxId){
       const tx = p.transactions.find(x=>x.id===editingTxId);
-      if(tx){ Object.assign(tx,{date,checkNum,detail,expenses,income,notes}); }
+      if(tx){ Object.assign(tx,{date,checkNum,detail,expenses,income,notes,business:isBusiness}); }
     } else {
-      p.transactions.push({id:uid(),date,checkNum,detail,expenses,income,notes,highlighted:false});
+      p.transactions.push({id:uid(),date,checkNum,detail,expenses,income,notes,highlighted:false,business:isBusiness});
     }
   }
   save(); renderAll(); closeModal('mTx');
@@ -2995,6 +3152,445 @@ function updateCameraLabels(){
   const tg = document.getElementById('totalGuideLine');
   if(tg) tg.setAttribute('data-label', es ? '← TOTAL →' : '← TOTAL →');
   el('totalGuideHint',   es ? 'Alinea el TOTAL con esta línea 🟠' : 'Align the TOTAL with this line 🟠');
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE 2: CREDIT CARD BALANCE COMPUTATION
+// ═══════════════════════════════════════════════
+function computeCreditBalance(page){
+  let b = page.balanceSeed || 0;
+  for(const tx of page.transactions){
+    if(tx.txType==='payment') b -= (tx.amount||0);
+    else b += (tx.amount||0);
+  }
+  return b;
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE 1: PAYMENT CALENDAR
+// ═══════════════════════════════════════════════
+function renderCalendar(){
+  const es = state.lang==='es';
+  const today = new Date();
+  const todayDay = today.getDate();
+
+  function daysUntil(dueDay){
+    if(!dueDay) return 999;
+    let d = dueDay - todayDay;
+    if(d < 0) d += 30;
+    return d;
+  }
+
+  const items = [];
+
+  for(const p of state.pages){
+    if(p.type!=='credit') continue;
+    if(p.paymentDueDay){
+      const d = daysUntil(p.paymentDueDay);
+      items.push({
+        id: 'cc_'+p.id,
+        name: p.name,
+        dueDay: p.paymentDueDay,
+        daysUntil: d,
+        autopay: p.autopay||false,
+        amount: null,
+        type: 'credit',
+        statementClose: p.statementCloseDay||null,
+        notes: p.notes||''
+      });
+    }
+  }
+
+  for(const b of (state.bills||[])){
+    items.push({
+      id: 'bill_'+b.id,
+      billId: b.id,
+      name: b.name,
+      dueDay: b.dueDay,
+      daysUntil: daysUntil(b.dueDay),
+      autopay: b.autopay||false,
+      amount: b.amount||null,
+      type: 'bill',
+      notes: b.notes||''
+    });
+  }
+
+  items.sort((a,b)=>a.daysUntil-b.daysUntil);
+
+  function itemRow(item){
+    const dueBadge = item.daysUntil===0
+      ? `<span style="background:#fee2e2;color:#dc2626;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700">${es?'¡Hoy!':'Today!'}</span>`
+      : item.daysUntil<=3
+      ? `<span style="background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:11px">${es?`en ${item.daysUntil}d`:`in ${item.daysUntil}d`}</span>`
+      : item.daysUntil<=7
+      ? `<span style="background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;font-size:11px">${es?`en ${item.daysUntil}d`:`in ${item.daysUntil}d`}</span>`
+      : `<span style="font-size:12px;color:var(--gray-500)">${es?`día ${item.dueDay}`:`day ${item.dueDay}`}</span>`;
+
+    const autopayBadge = item.autopay
+      ? `<span style="background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">✓ ${es?'AUTOPAGO':'AUTOPAY'}</span>`
+      : `<span style="background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">⚠ ${es?'MANUAL':'MANUAL'}</span>`;
+
+    const icon = item.type==='credit' ? '💳' : '📋';
+    const amtStr = item.amount ? fmt(item.amount) : '';
+    const deleteBtn = item.type==='bill'
+      ? `<button class="btn btn-xs btn-danger" onclick="deleteBill('${item.billId}')">✕</button>
+         <button class="btn btn-xs btn-outline" onclick="editBill('${item.billId}')">✎</button>`
+      : `<button class="btn btn-xs btn-outline" onclick="openCardDueDates('${item.id.replace('cc_','')}')">✎</button>`;
+
+    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--gray-100)">
+      <span style="font-size:18px">${icon}</span>
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600;font-size:14px">${esc(item.name)}</div>
+        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:3px">
+          ${dueBadge}
+          ${autopayBadge}
+          ${amtStr ? `<span style="font-size:12px;font-weight:600;color:var(--gray-700)">${amtStr}</span>` : ''}
+          ${item.statementClose ? `<span style="font-size:11px;color:var(--gray-400)">${es?`cierre día ${item.statementClose}`:`closes day ${item.statementClose}`}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;gap:4px">${deleteBtn}</div>
+    </div>`;
+  }
+
+  const thisWeek  = items.filter(i=>i.daysUntil<=7);
+  const thisMonth = items.filter(i=>i.daysUntil>7 && i.daysUntil<=30);
+  const later     = items.filter(i=>i.daysUntil>30);
+
+  function section(title, color, list){
+    if(!list.length) return '';
+    return `<div class="card" style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;border-bottom:2px solid ${color}20">${title}</div>
+      ${list.map(itemRow).join('')}
+    </div>`;
+  }
+
+  const noItems = items.length===0;
+  const mainContent = noItems
+    ? `<div style="text-align:center;padding:40px 20px;color:var(--gray-400)">
+        <div style="font-size:40px;margin-bottom:12px">📅</div>
+        <div style="font-weight:600;margin-bottom:8px">${es?'Sin pagos registrados':'No payments yet'}</div>
+        <div style="font-size:13px">${es?'Agrega tus fechas de pago abajo':'Add your payment due dates below'}</div>
+      </div>`
+    : section(es?'⚡ Esta semana':'⚡ This week','#dc2626',thisWeek)
+    + section(es?'📅 Este mes':'📅 This month','#2563eb',thisMonth)
+    + section(es?'🔮 Más adelante':'🔮 Later','#6b7280',later);
+
+  return `
+    <div class="page-header">
+      <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'📅 Calendario de Pagos':'📅 Payment Calendar'}</div>
+      <div class="page-actions">
+        <button class="btn btn-primary btn-sm" onclick="openAddBill()">+ ${es?'Agregar pago':'Add payment'}</button>
+      </div>
+    </div>
+    ${mainContent}
+    ${!noItems ? `<div style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;margin-bottom:16px">
+      ${es?'Las tarjetas de crédito se actualizan desde cada página de tarjeta.':'Credit cards are configured from each card page.'}
+    </div>` : ''}`;
+}
+
+function openAddBill(){
+  editingBillId = null;
+  buildBillForm(null);
+  openModal('mBill');
+}
+function editBill(id){
+  editingBillId = id;
+  const b = (state.bills||[]).find(x=>x.id===id);
+  buildBillForm(b);
+  openModal('mBill');
+}
+function buildBillForm(bill){
+  const es = state.lang==='es';
+  document.getElementById('mBillTitle').textContent = bill ? (es?'Editar pago':'Edit payment') : (es?'Agregar pago':'Add payment');
+  document.getElementById('mBillBody').innerHTML = `
+    <div class="fg"><label>${es?'Nombre del pago':'Payment name'}</label>
+      <input class="fc" id="bill-name" type="text" placeholder="${es?'Ej: FPL, Renta, Netflix':'E.g. FPL, Rent, Netflix'}" value="${esc(bill?bill.name:'')}">
+    </div>
+    <div class="form-row">
+      <div class="fg"><label>${es?'Día de vencimiento (1-31)':'Due day (1-31)'}</label>
+        <input class="fc" id="bill-day" type="number" min="1" max="31" placeholder="15" value="${bill?bill.dueDay:''}">
+      </div>
+      <div class="fg"><label>${es?'Monto (opcional)':'Amount (optional)'}</label>
+        <input class="fc" id="bill-amount" type="number" min="0" step="0.01" placeholder="0.00" value="${bill?(bill.amount||''):''}">
+      </div>
+    </div>
+    <div class="fg" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+        <input type="checkbox" id="bill-autopay" ${bill&&bill.autopay?'checked':''} style="width:16px;height:16px">
+        ✓ ${es?'En autopago':'On autopay'}
+      </label>
+    </div>
+    <div class="fg"><label>${es?'Notas (opcional)':'Notes (optional)'}</label>
+      <input class="fc" id="bill-notes" type="text" value="${esc(bill?bill.notes||'':'')}">
+    </div>`;
+  setTimeout(()=>document.getElementById('bill-name')?.focus(),150);
+}
+function saveBill(){
+  if(!state.bills) state.bills=[];
+  const es = state.lang==='es';
+  const name = document.getElementById('bill-name')?.value.trim()||'';
+  const dueDay = parseInt(document.getElementById('bill-day')?.value)||0;
+  const amount = parseAmt(document.getElementById('bill-amount')?.value)||null;
+  const autopay = document.getElementById('bill-autopay')?.checked||false;
+  const notes = document.getElementById('bill-notes')?.value.trim()||'';
+  if(!name){ toast(es?'Escribe un nombre.':'Enter a name.','warn'); return; }
+  if(!dueDay||dueDay<1||dueDay>31){ toast(es?'Día inválido (1-31).':'Invalid day (1-31).','warn'); return; }
+  if(editingBillId){
+    const b = state.bills.find(x=>x.id===editingBillId);
+    if(b) Object.assign(b,{name,dueDay,amount,autopay,notes});
+  } else {
+    state.bills.push({id:uid(),name,dueDay,amount,autopay,notes});
+  }
+  save(); renderAll(); closeModal('mBill');
+  toast(es?'✅ Guardado':'✅ Saved','ok');
+}
+function deleteBill(id){
+  if(!state.bills) return;
+  state.bills = state.bills.filter(x=>x.id!==id);
+  save(); renderAll();
+  toast(state.lang==='es'?'Eliminado':'Deleted','ok');
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE 2: CREDIT CARD ACTIONS (APR, DATES, BALANCE)
+// ═══════════════════════════════════════════════
+function setCreditBalance(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  const current = computeCreditBalance(p);
+  const val = prompt(es?`Saldo actual (calculado: ${fmt(current)}):\nIngresa el saldo real de tu tarjeta:`:`Current balance (computed: ${fmt(current)}):\nEnter your actual card balance:`, fmtNum(current));
+  if(val===null) return;
+  const desired = parseAmt(val);
+  if(isNaN(desired)||desired===null){ toast(es?'Monto inválido.':'Invalid amount.','err'); return; }
+  p.balanceSeed = (p.balanceSeed||0) + (desired - current);
+  save(); renderAll();
+  toast(es?`✅ Saldo actualizado: ${fmt(desired)}`:`✅ Balance updated: ${fmt(desired)}`,'ok');
+}
+
+function setCreditLimit(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  const val = prompt(es?'Límite de crédito:':'Credit limit:', fmtNum(p.limit||0));
+  if(val===null) return;
+  const v = parseAmt(val);
+  if(isNaN(v)||v===null){ toast(es?'Monto inválido.':'Invalid amount.','err'); return; }
+  p.limit = v;
+  save(); renderAll();
+  toast(es?`✅ Límite: ${fmt(v)}`:`✅ Limit: ${fmt(v)}`,'ok');
+}
+
+function openCardApr(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  document.getElementById('mCardSetupTitle').textContent = 'APR';
+  document.getElementById('mCardSetupBody').innerHTML = `
+    <div class="fg"><label>APR %</label>
+      <input class="fc" id="cs-apr" type="number" min="0" max="100" step="0.01" placeholder="22.99" value="${p.apr||''}">
+    </div>
+    <div class="fg" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+        <input type="checkbox" id="cs-promo" ${p.promoApr?'checked':''} style="width:16px;height:16px" onchange="document.getElementById('cs-promo-exp').style.display=this.checked?'block':'none'">
+        🏷 ${es?'Tasa promocional':'Promotional rate'}
+      </label>
+    </div>
+    <div class="fg" id="cs-promo-exp" style="display:${p.promoApr?'block':'none'}">
+      <label>${es?'Fecha de vencimiento de la promo':'Promo expiry date'}</label>
+      <input class="fc" id="cs-promo-date" type="text" placeholder="MM/DD/YYYY" value="${esc(p.promoExpiry||'')}">
+    </div>`;
+  document.getElementById('mCardSetupSave').onclick = ()=>{
+    const apr = parseFloat(document.getElementById('cs-apr')?.value)||null;
+    const promo = document.getElementById('cs-promo')?.checked||false;
+    const promoDate = document.getElementById('cs-promo-date')?.value.trim()||'';
+    p.apr = apr; p.promoApr = promo; p.promoExpiry = promoDate;
+    save(); renderAll(); closeModal('mCardSetup');
+    toast(es?'✅ APR guardado':'✅ APR saved','ok');
+  };
+  openModal('mCardSetup');
+}
+
+function openCardDueDates(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  document.getElementById('mCardSetupTitle').textContent = es?'Fechas de pago':'Payment dates';
+  document.getElementById('mCardSetupBody').innerHTML = `
+    <div class="form-row">
+      <div class="fg"><label>${es?'Día de cierre de estado (1-31)':'Statement close day (1-31)'}</label>
+        <input class="fc" id="cs-close" type="number" min="1" max="31" placeholder="25" value="${p.statementCloseDay||''}">
+      </div>
+      <div class="fg"><label>${es?'Día de pago vence (1-31)':'Payment due day (1-31)'}</label>
+        <input class="fc" id="cs-due" type="number" min="1" max="31" placeholder="20" value="${p.paymentDueDay||''}">
+      </div>
+    </div>
+    <div class="fg" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
+        <input type="checkbox" id="cs-autopay" ${p.autopay?'checked':''} style="width:16px;height:16px">
+        ✓ ${es?'En autopago':'On autopay'}
+      </label>
+    </div>`;
+  document.getElementById('mCardSetupSave').onclick = ()=>{
+    const closeDay = parseInt(document.getElementById('cs-close')?.value)||null;
+    const dueDay   = parseInt(document.getElementById('cs-due')?.value)||null;
+    const autopay  = document.getElementById('cs-autopay')?.checked||false;
+    if(closeDay && (closeDay<1||closeDay>31)){ toast(es?'Día inválido.':'Invalid day.','warn'); return; }
+    if(dueDay   && (dueDay<1  ||dueDay>31))  { toast(es?'Día inválido.':'Invalid day.','warn'); return; }
+    p.statementCloseDay = closeDay; p.paymentDueDay = dueDay; p.autopay = autopay;
+    save(); renderAll(); closeModal('mCardSetup');
+    toast(es?'✅ Guardado':'✅ Saved','ok');
+  };
+  openModal('mCardSetup');
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE 2: CARDS OVERVIEW PAGE
+// ═══════════════════════════════════════════════
+function renderCards(){
+  const es = state.lang==='es';
+  const creditPages = state.pages.filter(p=>p.type==='credit');
+  if(!creditPages.length){
+    return `<div style="text-align:center;padding:60px 20px;color:var(--gray-400)">
+      <div style="font-size:40px">💳</div>
+      <div style="font-weight:600;margin:12px 0 8px">${es?'No hay tarjetas de crédito':'No credit cards yet'}</div>
+      <button class="btn btn-primary" onclick="openCreatePage()">${es?'Crear tarjeta':'Create card'}</button>
+    </div>`;
+  }
+
+  let totalBal=0, totalLimit=0;
+  const cards = creditPages.map(p=>{
+    const bal = computeCreditBalance(p);
+    const limit = p.limit||null;
+    const avail = limit ? Math.max(0,limit-bal) : null;
+    const utilPct = limit ? Math.min(100,Math.round(bal/limit*100)) : null;
+    const utilColor = utilPct===null?'var(--gray-400)':utilPct>=90?'#dc2626':utilPct>=70?'#f59e0b':'#16a34a';
+    totalBal+=bal; if(limit) totalLimit+=limit;
+    return {p,bal,limit,avail,utilPct,utilColor};
+  });
+
+  const overviewCard = `
+    <div class="card" style="margin-bottom:12px;padding:14px 16px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:white">
+      <div style="font-size:12px;opacity:.8;margin-bottom:4px">${es?'Total de deuda en tarjetas':'Total card debt'}</div>
+      <div style="font-size:28px;font-weight:800">${fmt(totalBal)}</div>
+      ${totalLimit ? `<div style="font-size:12px;opacity:.8;margin-top:4px">${es?`de ${fmt(totalLimit)} en crédito total`:`of ${fmt(totalLimit)} total credit`}</div>` : ''}
+    </div>`;
+
+  const cardItems = cards.map(({p,bal,limit,avail,utilPct,utilColor})=>`
+    <div class="card" style="margin-bottom:10px;padding:14px 16px;cursor:pointer" onclick="switchTab('${p.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <div style="font-weight:700;font-size:15px">💳 ${esc(p.name)}</div>
+          <div style="font-size:24px;font-weight:800;color:${bal>0?'#dc2626':'#16a34a'};margin-top:4px">${fmt(bal)}</div>
+          ${limit ? `<div style="font-size:12px;color:var(--gray-500);margin-top:2px">${es?`Disponible: ${fmt(avail)}`:`Available: ${fmt(avail)}`} · ${es?`Límite: ${fmt(limit)}`:`Limit: ${fmt(limit)}`}</div>` : ''}
+        </div>
+        <div style="text-align:right">
+          ${p.apr ? `<div style="font-size:11px;color:var(--gray-500)">${es?'Tasa':'Rate'}</div><div style="font-weight:700;font-size:14px">${p.apr}%${p.promoApr?'<span style="font-size:10px;color:#9333ea"> 🏷promo</span>':''}</div>` : ''}
+          ${p.paymentDueDay ? `<div style="font-size:11px;color:var(--gray-500);margin-top:6px">${es?'Pago vence':'Due'}</div><div style="font-weight:600;font-size:13px">${es?`Día ${p.paymentDueDay}`:`Day ${p.paymentDueDay}`}</div>${p.autopay?'<div style="font-size:10px;color:#16a34a;font-weight:600">✓ autopay</div>':'<div style="font-size:10px;color:#b45309;font-weight:600">⚠ manual</div>'}` : ''}
+        </div>
+      </div>
+      ${utilPct!==null ? `<div style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--gray-500);margin-bottom:3px"><span>${es?'Utilización':'Utilization'}</span><span style="color:${utilColor};font-weight:700">${utilPct}%</span></div>
+        <div style="height:6px;background:var(--gray-200);border-radius:3px"><div style="height:6px;background:${utilColor};border-radius:3px;width:${utilPct}%"></div></div>
+      </div>` : ''}
+    </div>`).join('');
+
+  return `<div class="page-header" style="margin-bottom:12px">
+    <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'💳 Mis Tarjetas':'💳 My Cards'}</div>
+  </div>
+  ${overviewCard}${cardItems}`;
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE 3: BUSINESS PAGE
+// ═══════════════════════════════════════════════
+function renderBusiness(){
+  const es = state.lang==='es';
+  const allBizTx = [];
+  for(const p of state.pages){
+    for(const tx of p.transactions){
+      if(!tx.business) continue;
+      allBizTx.push({
+        ...tx,
+        accountName: p.name,
+        accountType: p.type,
+        pageId: p.id,
+      });
+    }
+  }
+
+  allBizTx.sort((a,b)=>{
+    const da = new Date(a.date), db = new Date(b.date);
+    return (isNaN(db)?0:db) - (isNaN(da)?0:da);
+  });
+
+  let bizIncome=0, bizExpenses=0;
+  for(const tx of allBizTx){
+    if(tx.accountType==='debit'){
+      bizIncome   += tx.income   ||0;
+      bizExpenses += tx.expenses ||0;
+    } else {
+      if(tx.txType==='payment') bizIncome += tx.amount||0;
+      else bizExpenses += tx.amount||0;
+    }
+  }
+  const net = bizIncome - bizExpenses;
+
+  if(!allBizTx.length){
+    return `<div class="page-header" style="margin-bottom:12px">
+      <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio':'🏢 Business'}</div>
+    </div>
+    <div style="text-align:center;padding:60px 20px;color:var(--gray-400)">
+      <div style="font-size:40px">🏢</div>
+      <div style="font-weight:600;margin:12px 0 8px">${es?'Sin transacciones de negocio':'No business transactions yet'}</div>
+      <div style="font-size:13px">${es?'Al agregar una transacción, marca "Transacción de negocio" para que aparezca aquí.':'When adding a transaction, check "Business transaction" to show it here.'}</div>
+    </div>`;
+  }
+
+  const summaryHTML = `<div class="sum-grid" style="margin-bottom:12px">
+    <div class="sum-card" style="border-left-color:var(--success)">
+      <div class="sum-label">📥 ${es?'Ingresos':'Income'}</div>
+      <div class="sum-value amt-positive">${fmt(bizIncome)}</div>
+    </div>
+    <div class="sum-card" style="border-left-color:var(--danger)">
+      <div class="sum-label">📤 ${es?'Gastos':'Expenses'}</div>
+      <div class="sum-value amt-negative">${fmt(bizExpenses)}</div>
+    </div>
+    <div class="sum-card" style="border-left-color:${net>=0?'var(--success)':'var(--danger)'}">
+      <div class="sum-label">💼 ${es?'Balance neto':'Net balance'}</div>
+      <div class="sum-value ${net>=0?'amt-positive':'amt-negative'}">${fmt(net)}</div>
+    </div>
+  </div>`;
+
+  const rows = allBizTx.map(tx=>{
+    const isPay = tx.txType==='payment';
+    const amtStr = tx.accountType==='credit'
+      ? (isPay ? `<span class="amt amt-positive">+${fmt(tx.amount)}</span>` : `<span class="amt amt-negative">-${fmt(tx.amount)}</span>`)
+      : `${tx.income?`<span class="amt amt-positive">+${fmt(tx.income)}</span>`:''}${tx.expenses?`<span class="amt amt-negative">-${fmt(tx.expenses)}</span>`:''}`;
+
+    return `<tr>
+      <td style="white-space:nowrap">${esc(tx.date)}</td>
+      <td><span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap">${esc(tx.accountName)}</span></td>
+      <td style="min-width:160px">${esc(tx.detail)}</td>
+      <td style="text-align:right">${amtStr}</td>
+      <td><button class="btn btn-xs btn-outline" onclick="switchTab('${tx.pageId}')">→</button></td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="page-header" style="margin-bottom:12px">
+    <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio':'🏢 Business'}</div>
+  </div>
+  ${summaryHTML}
+  <div class="card">
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="min-width:85px">${es?'Fecha':'Date'}</th>
+          <th style="min-width:90px">${es?'Cuenta':'Account'}</th>
+          <th>${es?'Descripción':'Description'}</th>
+          <th style="min-width:90px;text-align:right">${es?'Monto':'Amount'}</th>
+          <th style="min-width:40px"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>`;
 }
 
 // ═══════════════════════════════════════════════
