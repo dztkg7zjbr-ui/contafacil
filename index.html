@@ -252,6 +252,20 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 ::-webkit-scrollbar-thumb{background:var(--gray-300);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--gray-400)}
 
+/* ── GLOBAL SEARCH ── */
+.search-bar-wrap { padding: 12px 20px 0; max-width: 1700px; margin: 0 auto; }
+.search-bar { display:flex; align-items:center; gap:8px; background:var(--white); border:1.5px solid var(--gray-200); border-radius:24px; padding:6px 14px; transition:border-color .2s; box-shadow:var(--shadow); }
+.search-bar:focus-within { border-color:var(--primary); }
+.search-bar input { flex:1; border:none; outline:none; font-size:14px; background:transparent; color:var(--gray-900); }
+.search-bar input::placeholder { color:var(--gray-400); }
+.search-results { background:var(--white); border-radius:var(--radius); box-shadow:var(--shadow-lg); margin:8px 0 0; overflow:hidden; max-height:420px; overflow-y:auto; }
+.search-result-row { display:flex; align-items:center; gap:10px; padding:10px 16px; border-bottom:1px solid var(--gray-100); cursor:pointer; transition:background .15s; }
+.search-result-row:hover { background:var(--gray-50); }
+.search-result-acct { font-size:10px; font-weight:700; padding:2px 7px; border-radius:10px; background:var(--primary-light); color:var(--primary); white-space:nowrap; }
+.search-result-detail { flex:1; font-size:13px; font-weight:500; }
+.search-result-meta { font-size:11px; color:var(--gray-400); }
+.search-result-amt { font-weight:700; font-size:13px; white-space:nowrap; }
+
 /* ── CALENDAR GRID ── */
 .cal-grid-header {
   display: grid;
@@ -464,6 +478,15 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     </div>
   </header>
   <div class="tab-bar" id="tabBar"></div>
+  <div class="search-bar-wrap" id="searchWrap" style="display:none">
+    <div class="search-bar">
+      <span style="color:var(--gray-400)">🔍</span>
+      <input type="search" id="searchInput" placeholder="Buscar en todas las cuentas… / Search all accounts…"
+             oninput="runSearch(this.value)" onkeydown="if(event.key==='Escape'){clearSearch();}">
+      <button id="searchClear" onclick="clearSearch()" style="border:none;background:none;cursor:pointer;color:var(--gray-400);font-size:16px;display:none">✕</button>
+    </div>
+    <div class="search-results" id="searchResults" style="display:none"></div>
+  </div>
   <main class="main-content" id="mainContent"></main>
   <div class="fab-overlay" id="fabOverlay" onclick="closeFab()"></div>
   <div class="fab-menu" id="fabMenu" style="display:none"></div>
@@ -690,6 +713,17 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
+
+<!-- MODAL: Budget Goals -->
+<div class="overlay" id="mBudget" onclick="if(event.target===this)closeModal('mBudget')">
+<div class="modal" style="max-width:400px">
+  <div class="modal-header">
+    <span id="mBudgetTitle">🎯 Presupuesto mensual</span>
+    <button class="modal-close" onclick="closeModal('mBudget')">✕</button>
+  </div>
+  <div class="modal-body" id="mBudgetBody"></div>
+</div>
+</div>
 
 <!-- MODAL: Recurring transactions setup -->
 <div class="overlay" id="mRecurring">
@@ -1612,6 +1646,8 @@ function renderTabs(){
     const active = state.activeTab===p.id ? 'active' : '';
     const badge = p.type==='credit'?'badge-credit':'badge-debit';
     const icon = p.type==='credit'?'💳':'🏦';
+    const tabBal = (()=>{ let b=p.startBalance||0; for(const tx of p.transactions){b+=(tx.income||0)-(tx.expenses||0);} return b; })();
+    const showLowAlert = p.type==='debit' && (p.lowBalanceThreshold||0)>0 && tabBal < p.lowBalanceThreshold;
     html += `<div class="tab-item ${active}" draggable="true"
       data-pageid="${p.id}"
       ondragstart="tabDragStart(event,'${p.id}')"
@@ -1620,7 +1656,7 @@ function renderTabs(){
       ondragend="tabDragEnd(event)"
       onclick="switchTab('${p.id}')">
       <span class="tab-drag-handle">⠿</span>
-      ${icon} <span>${esc(p.name)}</span>
+      ${icon} <span>${esc(p.name)}</span>${showLowAlert ? '<span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:#dc2626;margin-left:3px;vertical-align:middle"></span>' : ''}
       <span class="tab-badge ${badge}">${p.type==='credit'?t('credit').slice(0,3):t('debit').slice(0,3)}</span>
       <button class="tab-close" onclick="event.stopPropagation();askDeletePage('${p.id}')" title="${t('deletePage')}">✕</button>
     </div>`;
@@ -1823,6 +1859,19 @@ function renderCredit(page){
 
 // ── DEBIT PAGE ──
 function renderDebit(page){
+  const es_d = state.lang==='es';
+  // Low balance alert
+  const curBalance = (()=>{ let b=page.startBalance||0; for(const tx of page.transactions){b+=(tx.income||0)-(tx.expenses||0);} return b; })();
+  const thresh = page.lowBalanceThreshold || 0;
+  const lowAlert = thresh > 0 && curBalance < thresh ? `
+    <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
+      <span style="font-size:20px">🚨</span>
+      <div>
+        <div style="font-weight:700;color:#dc2626;font-size:13px">${es_d?'¡Saldo bajo!':'Low balance!'}</div>
+        <div style="font-size:12px;color:#b91c1c">${es_d?`Saldo actual ${fmt(curBalance)} está por debajo del límite de ${fmt(thresh)}`:`Current balance ${fmt(curBalance)} is below your ${fmt(thresh)} alert threshold`}</div>
+      </div>
+    </div>` : '';
+
   let totalExp=0, totalInc=0;
 
   // Sort transactions by date ascending for running balance calc
@@ -1887,10 +1936,17 @@ function renderDebit(page){
       <div class="sum-label">🏁 ${t('startingBalance')}</div>
       <div class="sum-value">${fmt(page.startBalance||0)}</div>
       <div style="margin-top:6px"><button class="btn btn-xs btn-outline" onclick="setStartBal('${page.id}')">${t('setStartBal')}</button></div>
+      <div style="display:flex;align-items:center;gap:6px;margin-top:6px;flex-wrap:wrap">
+        <span style="font-size:12px;color:var(--gray-500)">🚨 ${es_d?'Alerta si baja de:':'Alert below:'}</span>
+        <input type="number" class="fc" style="width:110px;padding:4px 8px;font-size:12px"
+               value="${page.lowBalanceThreshold||''}" min="0" step="10"
+               placeholder="${es_d?'Sin alerta':'No alert'}"
+               onchange="setLowBalanceThreshold('${page.id}',this.value)">
+      </div>
     </div>
   </div>`;
 
-  return renderPageHeader(page) + summaryHTML + `
+  return renderPageHeader(page) + lowAlert + summaryHTML + `
   <div class="card">
     <div class="table-wrap">
       <table>
@@ -2047,6 +2103,57 @@ function renderMaster(){
       </div>`;
   }
 
+  // ── Last month spending (for MoM comparison) ──
+  const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  let lastSpend = 0;
+  for(const p of creditPages){
+    for(const tx of p.transactions){
+      if(tx.txType==='payment') continue;
+      const parts=(tx.date||'').split('/');
+      if(parts.length===3){
+        const txM=parseInt(parts[0]),txY=parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+        if(txM!==lastMonth.getMonth()+1||txY!==lastMonth.getFullYear()) continue;
+      } else continue;
+      lastSpend+=(tx.amount||0);
+    }
+  }
+  for(const p of debitPages){
+    for(const tx of p.transactions){
+      const parts=(tx.date||'').split('/');
+      if(parts.length===3){
+        const txM=parseInt(parts[0]),txY=parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+        if(txM!==lastMonth.getMonth()+1||txY!==lastMonth.getFullYear()) continue;
+      } else continue;
+      lastSpend+=(tx.expenses||0);
+    }
+  }
+  const thisTotal = grandSpend + monthExp;
+  const lastTotal = lastSpend;
+  const diff = thisTotal - lastTotal;
+  const diffPct = lastTotal > 0 ? Math.round(Math.abs(diff)/lastTotal*100) : null;
+
+  // ── Month-over-month card ──
+  const momCard = (lastTotal > 0 || thisTotal > 0) ? `
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;border-bottom:1px solid var(--gray-100)">
+        📈 ${es?'Este mes vs el mes pasado':'This month vs last month'}
+      </div>
+      <div style="display:flex;align-items:center;gap:0;padding:14px">
+        <div style="flex:1;text-align:center">
+          <div style="font-size:11px;color:var(--gray-400);margin-bottom:4px">${monthNames[lastMonth.getMonth()]}</div>
+          <div style="font-size:18px;font-weight:700">${fmt(lastTotal)}</div>
+        </div>
+        <div style="padding:0 16px;text-align:center">
+          <div style="font-size:22px">${diff>0?'📈':'📉'}</div>
+          <div style="font-size:12px;font-weight:700;color:${diff>0?'var(--danger)':'var(--success)'}">${diff>0?'+':'-'}${diffPct!==null?diffPct+'%':''}</div>
+        </div>
+        <div style="flex:1;text-align:center">
+          <div style="font-size:11px;color:var(--gray-400);margin-bottom:4px">${monthNames[now.getMonth()]}</div>
+          <div style="font-size:18px;font-weight:700;color:${diff>0?'var(--danger)':'var(--success)'}">${fmt(thisTotal)}</div>
+        </div>
+      </div>
+    </div>` : '';
+
   // ── Spending by category (this month) ──
   const activeCats = CREDIT_CATS.filter(c=>catTotals[c.id]>0).sort((a,b)=>catTotals[b.id]-catTotals[a.id]);
   let spendHTML = '';
@@ -2058,14 +2165,25 @@ function renderMaster(){
         </div>
         ${activeCats.map(c=>{
           const pct = grandSpend > 0 ? Math.round(catTotals[c.id]/grandSpend*100) : 0;
+          const budget = (state.budgets||{})[c.id];
+          const overBudget = budget && catTotals[c.id] > budget;
+          const nearBudget = budget && !overBudget && catTotals[c.id] >= budget * 0.8;
+          const budgetBar = budget ? `
+            <div style="display:flex;justify-content:space-between;font-size:10px;margin-top:2px">
+              <span style="color:${overBudget?'var(--danger)':nearBudget?'var(--warning)':'var(--gray-400)'};font-weight:${overBudget||nearBudget?700:400}">
+                ${overBudget?(es?'⚠️ Sobre presupuesto':'⚠️ Over budget'):nearBudget?(es?'⚡ Cerca del límite':'⚡ Near limit'):''}
+              </span>
+              <span style="color:var(--gray-400)">${fmt(catTotals[c.id])} / ${fmt(budget)}</span>
+            </div>` : '';
           return `<div style="padding:8px 14px;border-bottom:1px solid var(--gray-100)">
             <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
               <span style="font-size:13px">${c.icon} ${es?c.es:c.en}</span>
-              <span style="font-weight:700;font-size:13px">${fmt(catTotals[c.id])}</span>
+              <span style="font-weight:700;font-size:13px;color:${overBudget?'var(--danger)':nearBudget?'var(--warning)':'inherit'}">${fmt(catTotals[c.id])}</span>
             </div>
             <div style="height:4px;background:var(--gray-100);border-radius:2px">
-              <div style="height:4px;background:${c.color};border-radius:2px;width:${pct}%"></div>
+              <div style="height:4px;background:${overBudget?'var(--danger)':nearBudget?'var(--warning)':c.color};border-radius:2px;width:${pct}%"></div>
             </div>
+            ${budgetBar}
           </div>`;
         }).join('')}
         <div style="padding:8px 14px;display:flex;justify-content:space-between;font-weight:700;font-size:13px">
@@ -2095,8 +2213,9 @@ function renderMaster(){
       }).join('')}
     </div>` : '';
 
-  // ── Print button ──
-  const printBtn = `<div style="text-align:right;margin-bottom:8px">
+  // ── Print button + Budget button ──
+  const printBtn = `<div style="text-align:right;margin-bottom:8px;display:flex;gap:6px;justify-content:flex-end">
+    <button class="btn btn-ghost btn-sm" onclick="openBudgetModal()">🎯 ${es?'Presupuesto':'Budgets'}</button>
     <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir resumen':'Print summary'}</button>
   </div>`;
 
@@ -2117,7 +2236,7 @@ function renderMaster(){
         </div>`).join('')}
     </div>` : '';
 
-  return printBtn + heroCard + upcomingStrip + snapshotRow + billsDueHTML + spendHTML + accountLinks;
+  return printBtn + heroCard + upcomingStrip + snapshotRow + billsDueHTML + spendHTML + momCard + accountLinks;
 }
 
 function attachInlineListeners(page){
@@ -5083,14 +5202,119 @@ function otpBack(e, el, idx){
 }
 
 // ═══════════════════════════════════════════════
+// FEATURE: GLOBAL TRANSACTION SEARCH
+// ═══════════════════════════════════════════════
+let _searchDebounce = null;
+function showSearch(){
+  const w = document.getElementById('searchWrap');
+  if(w) w.style.display = 'block';
+}
+function runSearch(q){
+  clearTimeout(_searchDebounce);
+  _searchDebounce = setTimeout(()=>_doSearch(q), 180);
+  document.getElementById('searchClear').style.display = q ? 'inline' : 'none';
+}
+function _doSearch(q){
+  const res = document.getElementById('searchResults');
+  if(!res) return;
+  q = q.trim().toLowerCase();
+  if(!q){ res.style.display='none'; return; }
+
+  const hits = [];
+  for(const p of state.pages){
+    for(const tx of p.transactions){
+      const haystack = [tx.detail||'', tx.notes||'', tx.date||'', tx.checkNum||'', tx.category||''].join(' ').toLowerCase();
+      if(!haystack.includes(q)) continue;
+      const isCr = p.type==='credit';
+      const amt = isCr ? (tx.amount||0) : ((tx.income||0) - (tx.expenses||0));
+      hits.push({p, tx, isCr, amt});
+      if(hits.length >= 60) break;
+    }
+    if(hits.length >= 60) break;
+  }
+
+  if(!hits.length){
+    res.innerHTML = `<div style="padding:16px;text-align:center;color:var(--gray-400);font-size:13px">${state.lang==='es'?'Sin resultados':'No results'}</div>`;
+    res.style.display = 'block';
+    return;
+  }
+
+  res.innerHTML = hits.map(({p,tx,isCr,amt})=>{
+    const amtColor = isCr ? 'color:var(--danger)' : (amt>=0?'color:var(--success)':'color:var(--danger)');
+    const amtStr  = isCr ? '-'+fmt(tx.amount||0) : (amt>=0?'+'+fmt(amt):'-'+fmt(Math.abs(amt)));
+    return `<div class="search-result-row" onclick="closeFab&&closeFab();switchTab('${p.id}')">
+      <span class="search-result-acct">${isCr?'💳':'🏦'} ${esc(p.name)}</span>
+      <span class="search-result-detail">${esc(tx.detail||'—')}</span>
+      <span class="search-result-meta">${esc(tx.date||'')}</span>
+      <span class="search-result-amt" style="${amtColor}">${amtStr}</span>
+    </div>`;
+  }).join('');
+  res.style.display = 'block';
+}
+function clearSearch(){
+  const inp = document.getElementById('searchInput');
+  const res = document.getElementById('searchResults');
+  const clr = document.getElementById('searchClear');
+  if(inp) inp.value = '';
+  if(res){ res.innerHTML=''; res.style.display='none'; }
+  if(clr) clr.style.display='none';
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: MONTHLY BUDGET GOALS PER CATEGORY
+// ═══════════════════════════════════════════════
+function openBudgetModal(){
+  const es = state.lang==='es';
+  document.getElementById('mBudgetTitle').textContent = es ? '🎯 Presupuesto mensual' : '🎯 Monthly Budgets';
+  const body = document.getElementById('mBudgetBody');
+  body.innerHTML = `
+    <p style="font-size:12px;color:var(--gray-500);margin-bottom:14px">${es?'Establece límites de gasto por categoría. Deja en blanco para sin límite.':'Set spending limits per category. Leave blank for no limit.'}</p>
+    ${CREDIT_CATS.map(c=>`
+      <div class="form-group" style="margin-bottom:10px">
+        <label class="form-label">${c.icon} ${es?c.es:c.en}</label>
+        <input type="number" class="form-control" id="budget_${c.id}" min="0" step="0.01"
+               placeholder="${es?'Sin límite':'No limit'}" value="${state.budgets[c.id]||''}">
+      </div>`).join('')}
+    <div style="display:flex;gap:8px;margin-top:16px">
+      <button class="btn btn-primary" style="flex:1" onclick="saveBudgets()">💾 ${es?'Guardar':'Save'}</button>
+      <button class="btn btn-ghost" onclick="closeModal('mBudget')">${es?'Cancelar':'Cancel'}</button>
+    </div>`;
+  openModal('mBudget');
+}
+function saveBudgets(){
+  state.budgets = state.budgets || {};
+  for(const c of CREDIT_CATS){
+    const val = parseFloat(document.getElementById('budget_'+c.id)?.value||'');
+    if(isNaN(val) || val <= 0) delete state.budgets[c.id];
+    else state.budgets[c.id] = val;
+  }
+  save();
+  closeModal('mBudget');
+  renderAll();
+  toast(state.lang==='es'?'✅ Presupuesto guardado':'✅ Budgets saved','ok',2500);
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: LOW BALANCE THRESHOLD
+// ═══════════════════════════════════════════════
+function setLowBalanceThreshold(pageId, val){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const v = parseFloat(val);
+  p.lowBalanceThreshold = isNaN(v) || v<=0 ? 0 : v;
+  save(); renderAll();
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 load();                                  // sync: localStorage (instant)
 if(!state.activeTab) state.activeTab='master';
 if(!state.bills) state.bills=[];
 if(!state.lastRecurringCheck) state.lastRecurringCheck='';
+if(!state.budgets) state.budgets={};
 renderAll();
 applyTheme();
+showSearch();
 updateSyncBadge();
 initFileSync();                          // async: restore main auto-save handle
 initBackupSync();                        // async: restore hard-backup handle
