@@ -714,6 +714,28 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 
 <div class="toast-wrap" id="toastWrap"></div>
 
+<!-- MODAL: Payoff Calculator -->
+<div class="overlay" id="mPayoff" onclick="if(event.target===this)closeModal('mPayoff')">
+<div class="modal" style="max-width:400px">
+  <div class="modal-header">
+    <span id="mPayoffTitle">💳 Calculadora de pago</span>
+    <button class="modal-close" onclick="closeModal('mPayoff')">✕</button>
+  </div>
+  <div class="modal-body" id="mPayoffBody"></div>
+</div>
+</div>
+
+<!-- MODAL: Bill Payment History -->
+<div class="overlay" id="mBillHistory" onclick="if(event.target===this)closeModal('mBillHistory')">
+<div class="modal" style="max-width:400px">
+  <div class="modal-header">
+    <span id="mBillHistoryTitle">📋 Historial de pagos</span>
+    <button class="modal-close" onclick="closeModal('mBillHistory')">✕</button>
+  </div>
+  <div class="modal-body" id="mBillHistoryBody"></div>
+</div>
+</div>
+
 <!-- MODAL: Budget Goals -->
 <div class="overlay" id="mBudget" onclick="if(event.target===this)closeModal('mBudget')">
 <div class="modal" style="max-width:400px">
@@ -2213,9 +2235,10 @@ function renderMaster(){
       }).join('')}
     </div>` : '';
 
-  // ── Print button + Budget button ──
-  const printBtn = `<div style="text-align:right;margin-bottom:8px;display:flex;gap:6px;justify-content:flex-end">
+  // ── Print button + Budget button + Tax Export ──
+  const printBtn = `<div style="text-align:right;margin-bottom:8px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
     <button class="btn btn-ghost btn-sm" onclick="openBudgetModal()">🎯 ${es?'Presupuesto':'Budgets'}</button>
+    <button class="btn btn-ghost btn-sm" onclick="printTaxSummary()">📋 ${es?'Exportar impuestos':'Tax export'}</button>
     <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir resumen':'Print summary'}</button>
   </div>`;
 
@@ -2236,7 +2259,46 @@ function renderMaster(){
         </div>`).join('')}
     </div>` : '';
 
-  return printBtn + heroCard + upcomingStrip + snapshotRow + billsDueHTML + spendHTML + momCard + accountLinks;
+  // ── Net worth history sparkline ──
+  const hist = (state.netWorthHistory||[]).slice(-12);
+  let histHTML = '';
+  if(hist.length >= 2){
+    const vals = hist.map(h=>h.net);
+    const minV = Math.min(...vals), maxV = Math.max(...vals);
+    const range = maxV - minV || 1;
+    const W=260, H=60, pad=4;
+    const pts = vals.map((v,i)=>{
+      const x = pad + (i/(vals.length-1))*(W-pad*2);
+      const y = H - pad - ((v-minV)/range)*(H-pad*2);
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+    const lastNet = vals[vals.length-1];
+    const firstNet = vals[0];
+    const trendUp = lastNet >= firstNet;
+    histHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;border-bottom:1px solid var(--gray-100)">
+          📈 ${es?'Historial de balance neto':'Net worth history'} <span style="font-weight:400;font-size:11px;color:var(--gray-400)">(${es?'últimos':'last'} ${hist.length} ${es?'meses':'months'})</span>
+        </div>
+        <div style="padding:14px;overflow-x:auto">
+          <svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;height:${H}px;display:block">
+            <polyline points="${pts}" fill="none" stroke="${trendUp?'#16a34a':'#dc2626'}" stroke-width="2" stroke-linejoin="round"/>
+            ${vals.map((v,i)=>{
+              const x=pad+(i/(vals.length-1))*(W-pad*2);
+              const y=H-pad-((v-minV)/range)*(H-pad*2);
+              return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3" fill="${trendUp?'#16a34a':'#dc2626'}"/>`;
+            }).join('')}
+          </svg>
+          <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--gray-400);margin-top:4px">
+            <span>${hist[0].month}</span>
+            <span style="font-weight:700;color:${trendUp?'var(--success)':'var(--danger)'}">${fmt(lastNet)}</span>
+            <span>${hist[hist.length-1].month}</span>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  return printBtn + heroCard + upcomingStrip + snapshotRow + billsDueHTML + spendHTML + momCard + accountLinks + histHTML;
 }
 
 function attachInlineListeners(page){
@@ -4117,6 +4179,7 @@ function renderCalendar(){
           </div>
           ${dStr} ${apBadge}
           ${item.amount?`<span style="font-weight:600;font-size:13px">${fmt(item.amount)}</span>`:''}
+          <button class="btn btn-xs btn-ghost" onclick="event.stopPropagation();openBillHistory('${item.id}')">📋</button>
           <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();openCalDay(${item.day},${calMonth},${calYear})">Ver</button>
         </div>`;
       }).join('')}
@@ -4513,6 +4576,9 @@ function renderCards(){
         </div>
       </div>
       ${utilBar}
+      <div style="margin-top:10px;display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn btn-ghost btn-sm" onclick="event.stopPropagation();openPayoffCalc('${p.id}')">📊 ${es?'Calcular pago':'Payoff calc'}</button>
+      </div>
     </div>`;
   }).join('');
 
@@ -4622,6 +4688,7 @@ function renderBusiness(){
   const headerHTML = `<div class="page-header" style="margin-bottom:12px">
     <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio / Propiedad':'🏢 Business / Property'}</div>
     <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" onclick="printTaxSummary()">📋 ${es?'Exportar impuestos':'Tax export'}</button>
       <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir':'Print'}</button>
     </div>
   </div>`;
@@ -5305,6 +5372,243 @@ function setLowBalanceThreshold(pageId, val){
 }
 
 // ═══════════════════════════════════════════════
+// FEATURE: NET WORTH HISTORY (Monthly Snapshots)
+// ═══════════════════════════════════════════════
+function takeNetWorthSnapshot(){
+  const now = new Date();
+  const key = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if((state.netWorthHistory||[]).some(s=>s.month===key)) return;
+  const debitPages  = state.pages.filter(p=>p.type==='debit');
+  const creditPages = state.pages.filter(p=>p.type==='credit');
+  let cash=0, debt=0;
+  for(const p of debitPages){ let b=p.startBalance||0; for(const tx of p.transactions){b+=(tx.income||0)-(tx.expenses||0);} cash+=b; }
+  for(const p of creditPages){ debt+=computeCreditBalance(p); }
+  state.netWorthHistory = [...(state.netWorthHistory||[]), {month:key, cash, debt, net:cash-debt}];
+  if(state.netWorthHistory.length > 24) state.netWorthHistory = state.netWorthHistory.slice(-24);
+  save();
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: CREDIT CARD PAYOFF CALCULATOR
+// ═══════════════════════════════════════════════
+function openPayoffCalc(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  const bal = computeCreditBalance(p);
+  const apr = p.apr || 24;
+  document.getElementById('mPayoffTitle').textContent = `\u{1F4B3} ${esc(p.name)} — ${es?'Calculadora':'Payoff Calc'}`;
+  document.getElementById('mPayoffBody').innerHTML = `
+    <div style="background:var(--gray-50);border-radius:8px;padding:12px;margin-bottom:14px">
+      <div style="font-size:12px;color:var(--gray-500)">${es?'Saldo actual':'Current balance'}</div>
+      <div style="font-size:22px;font-weight:800;color:var(--danger)">${fmt(bal)}</div>
+    </div>
+    <div class="form-group">
+      <label class="form-label">APR % (${es?'tasa anual':'annual rate'})</label>
+      <input type="number" class="form-control" id="payoffApr" value="${apr}" min="0" max="100" step="0.1"
+             onchange="updatePayoffCalc('${pageId}')">
+    </div>
+    <div class="form-group">
+      <label class="form-label">${es?'Pago mensual':'Monthly payment'} ($)</label>
+      <input type="number" class="form-control" id="payoffPmt" value="${Math.max(25,Math.round(bal*0.02))}" min="1" step="5"
+             oninput="updatePayoffCalc('${pageId}')">
+    </div>
+    <div id="payoffResult" style="margin-top:14px"></div>
+    <div style="margin-top:14px">
+      <button class="btn btn-primary btn-sm" onclick="savePageApr('${pageId}')">&#x1F4BE; ${es?'Guardar APR':'Save APR'}</button>
+    </div>`;
+  updatePayoffCalc(pageId);
+  openModal('mPayoff');
+}
+function updatePayoffCalc(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  const bal = computeCreditBalance(p);
+  const apr = parseFloat(document.getElementById('payoffApr')?.value||'24')||24;
+  const pmt = parseFloat(document.getElementById('payoffPmt')?.value||'0')||0;
+  const res = document.getElementById('payoffResult'); if(!res) return;
+  if(bal <= 0){ res.innerHTML=`<div style="color:var(--success);font-weight:700;text-align:center;padding:12px">&#x1F389; ${es?'&#xA1;Sin deuda!':'No balance!'}</div>`; return; }
+  const monthlyRate = apr/100/12;
+  if(pmt <= 0){ res.innerHTML=`<div style="color:var(--danger);font-size:13px">${es?'Ingresa un pago mensual':'Enter a monthly payment'}</div>`; return; }
+  if(monthlyRate > 0 && pmt <= bal*monthlyRate){ res.innerHTML=`<div style="color:var(--danger);font-size:13px">&#x26A0;&#xFE0F; ${es?'El pago es menor al inter\xE9s mensual':'Payment is less than monthly interest'}</div>`; return; }
+  let remaining = bal, months = 0, totalInterest = 0;
+  while(remaining > 0.01 && months < 600){
+    const interest = remaining * monthlyRate;
+    totalInterest += interest;
+    remaining = remaining + interest - pmt;
+    months++;
+    if(remaining < 0) remaining = 0;
+  }
+  const years = Math.floor(months/12), mos = months%12;
+  const timeStr = years > 0 ? `${years}a ${mos}m` : `${months}m`;
+  res.innerHTML = `
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div style="background:var(--primary-light);border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:11px;color:var(--primary);font-weight:600">${es?'Tiempo':'Time'}</div>
+        <div style="font-size:20px;font-weight:800;color:var(--primary)">${timeStr}</div>
+      </div>
+      <div style="background:#fee2e2;border-radius:8px;padding:10px;text-align:center">
+        <div style="font-size:11px;color:var(--danger);font-weight:600">${es?'Intereses totales':'Total interest'}</div>
+        <div style="font-size:20px;font-weight:800;color:var(--danger)">${fmt(totalInterest)}</div>
+      </div>
+    </div>
+    <div style="margin-top:10px;font-size:12px;color:var(--gray-500);text-align:center">${es?'Pagar\xE1s en total':'You will pay in total'}: <strong>${fmt(bal+totalInterest)}</strong></div>`;
+}
+function savePageApr(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const apr = parseFloat(document.getElementById('payoffApr')?.value||'24');
+  if(!isNaN(apr)) p.apr = apr;
+  save();
+  toast(state.lang==='es'?'APR guardado':'APR saved','ok',2000);
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: YEAR-END TAX EXPORT
+// ═══════════════════════════════════════════════
+function printTaxSummary(){
+  const es = state.lang==='es';
+  const now = new Date();
+  const yearStr = prompt(es?`A\xF1o fiscal (p.ej. ${now.getFullYear()}):`:`Tax year (e.g. ${now.getFullYear()}):`, String(now.getFullYear()));
+  if(yearStr===null) return;
+  const year = parseInt(yearStr||String(now.getFullYear()));
+  if(isNaN(year)) return;
+
+  const incomeRows = [], expenseRows = [];
+  for(const p of state.pages){
+    for(const tx of p.transactions){
+      if(!tx.business) continue;
+      const parts=(tx.date||'').split('/');
+      let txYear = now.getFullYear();
+      if(parts.length===3) txYear=parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+      if(txYear !== year) continue;
+      const isCr = p.type==='credit';
+      const acct = p.name;
+      if(isCr){
+        if(tx.txType!=='payment') expenseRows.push({date:tx.date,detail:tx.detail||'',category:tx.category||'other',amount:tx.amount||0,acct});
+      } else {
+        if((tx.income||0)>0) incomeRows.push({date:tx.date,detail:tx.detail||'',amount:tx.income,acct});
+        if((tx.expenses||0)>0) expenseRows.push({date:tx.date,detail:tx.detail||'',category:'expense',amount:tx.expenses,acct});
+      }
+    }
+  }
+
+  const totalInc = incomeRows.reduce((s,r)=>s+r.amount,0);
+  const totalExp = expenseRows.reduce((s,r)=>s+r.amount,0);
+  const fmtP = n=>'$'+parseFloat(n||0).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+
+  const catGroups = {};
+  for(const r of expenseRows){
+    if(!catGroups[r.category]) catGroups[r.category]=[];
+    catGroups[r.category].push(r);
+  }
+
+  const html = `<!DOCTYPE html><html lang="${es?'es':'en'}"><head><meta charset="UTF-8">
+<title>ContaF\xE1cil — ${es?'Resumen Fiscal':'Tax Summary'} ${year}</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:Arial,sans-serif;font-size:12px;color:#111;padding:24px}
+  h1{font-size:18px;color:#1e40af;margin-bottom:4px}
+  h2{font-size:13px;font-weight:700;color:#374151;border-bottom:2px solid #2563eb;padding-bottom:4px;margin:18px 0 8px;text-transform:uppercase;letter-spacing:.4px}
+  h3{font-size:12px;font-weight:700;color:#6b7280;margin:12px 0 6px}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px}
+  th{background:#f3f4f6;text-align:left;padding:6px 8px;font-size:11px;text-transform:uppercase;color:#6b7280}
+  td{padding:6px 8px;border-bottom:1px solid #f3f4f6;font-size:12px}
+  .amt{text-align:right;font-weight:600}
+  .total-row{font-weight:700;background:#f9fafb;border-top:2px solid #e5e7eb}
+  .summary-box{display:inline-block;border:1px solid #e5e7eb;border-radius:6px;padding:10px 16px;margin:8px 8px 8px 0;text-align:center}
+  .summary-label{font-size:10px;color:#6b7280;text-transform:uppercase}
+  .summary-val{font-size:20px;font-weight:800}
+  .green{color:#16a34a}.red{color:#dc2626}.blue{color:#2563eb}
+  .footer{margin-top:20px;font-size:10px;color:#9ca3af;border-top:1px solid #e5e7eb;padding-top:10px;text-align:center}
+  @media print{button{display:none!important}@page{margin:1cm}}
+</style></head><body>
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px">
+  <div>
+    <h1>&#x1F4B0; ContaF\xE1cil</h1>
+    <div style="font-size:13px;color:#6b7280">${es?'Resumen Fiscal':'Tax Summary'} — ${year}</div>
+    <div style="font-size:11px;color:#9ca3af;margin-top:2px">${es?'Solo transacciones marcadas como negocio':'Business-tagged transactions only'}</div>
+  </div>
+  <div style="display:flex;gap:8px">
+    <button onclick="window.close()" style="padding:6px 12px;background:#f3f4f6;border:none;border-radius:6px;cursor:pointer;font-size:12px">← ${es?'Cerrar':'Close'}</button>
+    <button onclick="window.print()" style="padding:6px 12px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:pointer;font-size:12px">&#x1F5A8;&#xFE0F; ${es?'Imprimir':'Print'}</button>
+  </div>
+</div>
+
+<div>
+  <div class="summary-box"><div class="summary-label">${es?'Ingresos':'Income'}</div><div class="summary-val green">${fmtP(totalInc)}</div></div>
+  <div class="summary-box"><div class="summary-label">${es?'Gastos':'Expenses'}</div><div class="summary-val red">${fmtP(totalExp)}</div></div>
+  <div class="summary-box"><div class="summary-label">${es?'Neto':'Net'}</div><div class="summary-val ${totalInc-totalExp>=0?'green':'red'}">${fmtP(totalInc-totalExp)}</div></div>
+</div>
+
+<h2>${es?'Ingresos del Negocio':'Business Income'}</h2>
+${incomeRows.length?`<table><thead><tr><th>${es?'Fecha':'Date'}</th><th>${es?'Descripci\xF3n':'Description'}</th><th>${es?'Cuenta':'Account'}</th><th style="text-align:right">${es?'Monto':'Amount'}</th></tr></thead><tbody>
+${incomeRows.sort((a,b)=>a.date>b.date?1:-1).map(r=>`<tr><td>${r.date}</td><td>${r.detail}</td><td>${r.acct}</td><td class="amt green">${fmtP(r.amount)}</td></tr>`).join('')}
+<tr class="total-row"><td colspan="3">${es?'Total Ingresos':'Total Income'}</td><td class="amt green">${fmtP(totalInc)}</td></tr>
+</tbody></table>`:`<p style="color:#9ca3af;font-size:12px;margin-bottom:12px">${es?'Sin ingresos de negocio':'No business income'}</p>`}
+
+<h2>${es?'Gastos del Negocio':'Business Expenses'}</h2>
+${Object.entries(catGroups).map(([cat,rows])=>{
+  const catTotal = rows.reduce((s,r)=>s+r.amount,0);
+  return `<h3>${cat} — ${fmtP(catTotal)}</h3>
+<table><thead><tr><th>${es?'Fecha':'Date'}</th><th>${es?'Descripci\xF3n':'Description'}</th><th>${es?'Cuenta':'Account'}</th><th style="text-align:right">${es?'Monto':'Amount'}</th></tr></thead><tbody>
+${rows.sort((a,b)=>a.date>b.date?1:-1).map(r=>`<tr><td>${r.date}</td><td>${r.detail}</td><td>${r.acct}</td><td class="amt red">${fmtP(r.amount)}</td></tr>`).join('')}
+<tr class="total-row"><td colspan="3">${es?'Subtotal':'Subtotal'}</td><td class="amt red">${fmtP(catTotal)}</td></tr>
+</tbody></table>`;
+}).join('')}
+${!expenseRows.length?`<p style="color:#9ca3af;font-size:12px">${es?'Sin gastos de negocio':'No business expenses'}</p>`:''}
+
+<div class="footer">ContaF\xE1cil \xB7 ${es?'Exportado el':'Exported on'} ${now.toLocaleDateString()} \xB7 ${es?'Solo para referencia':'For reference only'}</div>
+</body></html>`;
+
+  const win = window.open('','_blank','width=860,height=720');
+  if(win){ win.document.write(html); win.document.close(); win.onafterprint=()=>win.close(); }
+  else toast(es?'Permite ventanas emergentes.':'Allow pop-ups.','warn',3000);
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: BILL PAYMENT HISTORY
+// ═══════════════════════════════════════════════
+function openBillHistory(billId){
+  const es = state.lang==='es';
+  let name='', paidMonths={};
+  const bill = (state.bills||[]).find(b=>b.id===billId);
+  if(bill){ name=bill.name; paidMonths=bill.paidMonths||{}; }
+  else {
+    const p = state.pages.find(x=>x.id===billId);
+    if(p){ name=p.name+' ('+(es?'Tarjeta':'Card')+')'; paidMonths=p.paidMonths||{}; }
+  }
+  if(!name) return;
+
+  document.getElementById('mBillHistoryTitle').textContent = `\u{1F4CB} ${esc(name)}`;
+
+  const now = new Date();
+  const months = [];
+  for(let i=23; i>=0; i--){
+    const d = new Date(now.getFullYear(), now.getMonth()-i, 1);
+    const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`;
+    const isFuture = d > now;
+    months.push({key, label:`${d.toLocaleString(es?'es-US':'en-US',{month:'short'})} ${d.getFullYear()}`, paid:!!paidMonths[key], isFuture});
+  }
+
+  const paidCount = months.filter(m=>!m.isFuture&&m.paid).length;
+  const totalCount = months.filter(m=>!m.isFuture).length;
+
+  document.getElementById('mBillHistoryBody').innerHTML = `
+    <div style="text-align:center;margin-bottom:14px">
+      <span style="font-size:24px;font-weight:800;color:var(--success)">${paidCount}</span>
+      <span style="color:var(--gray-400);font-size:14px"> / ${totalCount} ${es?'pagados':'paid'}</span>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:12px">
+      ${months.map(m=>`
+        <div style="text-align:center;padding:6px 4px;border-radius:6px;border:1px solid ${m.isFuture?'var(--gray-200)':m.paid?'#86efac':'#fca5a5'};background:${m.isFuture?'var(--gray-50)':m.paid?'#dcfce7':'#fee2e2'}">
+          <div style="font-size:9px;color:var(--gray-500);font-weight:600">${m.label}</div>
+          <div style="font-size:14px">${m.isFuture?'⬜':m.paid?'✅':'❌'}</div>
+        </div>`).join('')}
+    </div>
+    <button class="btn btn-ghost" style="width:100%" onclick="closeModal('mBillHistory')">${es?'Cerrar':'Close'}</button>`;
+  openModal('mBillHistory');
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 load();                                  // sync: localStorage (instant)
@@ -5312,6 +5616,7 @@ if(!state.activeTab) state.activeTab='master';
 if(!state.bills) state.bills=[];
 if(!state.lastRecurringCheck) state.lastRecurringCheck='';
 if(!state.budgets) state.budgets={};
+if(!state.netWorthHistory) state.netWorthHistory=[];
 renderAll();
 applyTheme();
 showSearch();
@@ -5319,6 +5624,7 @@ updateSyncBadge();
 initFileSync();                          // async: restore main auto-save handle
 initBackupSync();                        // async: restore hard-backup handle
 processRecurringTransactions();          // auto-create any recurring tx due today
+takeNetWorthSnapshot();                  // monthly net worth snapshot (once per month)
 sbInit();                                // async: restore Supabase session + cloud sync
 
 // ── Periodic writes ──
