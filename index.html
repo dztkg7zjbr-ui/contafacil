@@ -36,6 +36,21 @@
   --shadow-md:0 4px 6px rgba(0,0,0,.07),0 2px 4px rgba(0,0,0,.06);
   --shadow-lg:0 10px 15px rgba(0,0,0,.1),0 4px 6px rgba(0,0,0,.05);
 }
+[data-theme="dark"]{
+  --white:#1f2937;
+  --gray-50:#111827;
+  --gray-100:#1f2937;
+  --gray-200:#374151;
+  --gray-300:#4b5563;
+  --gray-400:#6b7280;
+  --gray-500:#9ca3af;
+  --gray-600:#d1d5db;
+  --gray-700:#e5e7eb;
+  --gray-800:#f3f4f6;
+  --gray-900:#f9fafb;
+  --primary-light:#1e3a8a;
+}
+[data-theme="dark"] body{background:#111827}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--gray-100);color:var(--gray-900);min-height:100vh;font-size:14px;line-height:1.5}
 
 /* ── HEADER ── */
@@ -383,6 +398,16 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   font-weight:600;pointer-events:none;text-shadow:0 1px 3px rgba(0,0,0,.7);
 }
 
+/* ── FAB ── */
+.fab { position:fixed; bottom:24px; right:20px; width:52px; height:52px; border-radius:50%; background:var(--primary); color:white; border:none; font-size:26px; cursor:pointer; box-shadow:0 4px 14px rgba(37,99,235,.45); display:flex; align-items:center; justify-content:center; z-index:200; transition:transform .15s,box-shadow .15s; }
+.fab:hover { transform:scale(1.08); box-shadow:0 6px 20px rgba(37,99,235,.55); }
+.fab-menu { position:fixed; bottom:84px; right:20px; z-index:200; display:flex; flex-direction:column; gap:8px; align-items:flex-end; }
+.fab-menu-item { display:flex; align-items:center; gap:8px; cursor:pointer; }
+.fab-menu-item span.fab-label { background:var(--gray-800); color:var(--white); font-size:12px; font-weight:600; padding:5px 10px; border-radius:20px; white-space:nowrap; box-shadow:var(--shadow); }
+.fab-menu-item button { width:40px; height:40px; border-radius:50%; border:none; cursor:pointer; font-size:18px; box-shadow:var(--shadow); background:var(--white); }
+.fab-overlay { position:fixed; inset:0; z-index:199; background:rgba(0,0,0,.2); display:none; }
+.fab-overlay.open { display:block; }
+
 /* ── MOBILE RESPONSIVE ── */
 @media(max-width:640px){
   .main-content{padding:10px}
@@ -426,6 +451,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <button class="hnav-btn" id="hnav-biz"  onclick="switchTab('business')" title="Negocio / Business">🏢</button>
       <button class="hnav-btn" id="hnav-debit" onclick="switchTab('debit-overview')" title="Cuentas / Accounts">🏦</button>
       <button class="hnav-btn auth-btn" id="authBtn" onclick="openAuthModal()" title="Sincronizar en la nube / Cloud sync">☁️<span class="auth-dot" id="authDot"></span></button>
+      <button class="hnav-btn" id="darkModeBtn" onclick="toggleDark()" title="Modo oscuro / Dark mode">🌙</button>
     </div>
     <div class="header-spacer"></div>
     <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
@@ -439,6 +465,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </header>
   <div class="tab-bar" id="tabBar"></div>
   <main class="main-content" id="mainContent"></main>
+  <div class="fab-overlay" id="fabOverlay" onclick="closeFab()"></div>
+  <div class="fab-menu" id="fabMenu" style="display:none"></div>
+  <button class="fab" id="fabBtn" onclick="toggleFab()" title="Agregar transacción">＋</button>
 </div>
 
 <!-- MODAL: Cloud Auth -->
@@ -939,6 +968,55 @@ let sbUser    = null;   // current auth user
 let sbPushTimer = null; // debounce handle for cloud push
 let sbLastSync  = null; // Date of last successful push/pull
 let _sbEmail    = '';   // email being verified (OTP flow)
+
+// Dark mode
+function toggleDark(){
+  const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+  const next = isDark ? 'light' : 'dark';
+  document.documentElement.setAttribute('data-theme', next);
+  localStorage.setItem('cf_theme', next);
+  document.getElementById('darkModeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+}
+function applyTheme(){
+  const t = localStorage.getItem('cf_theme') || 'light';
+  document.documentElement.setAttribute('data-theme', t);
+  const btn = document.getElementById('darkModeBtn');
+  if(btn) btn.textContent = t === 'dark' ? '☀️' : '🌙';
+}
+
+// FAB
+let _fabOpen = false;
+function toggleFab(){
+  _fabOpen = !_fabOpen;
+  const menu = document.getElementById('fabMenu');
+  const overlay = document.getElementById('fabOverlay');
+  const btn = document.getElementById('fabBtn');
+  if(_fabOpen){
+    const items = state.pages.map(p => {
+      const icon = p.type === 'credit' ? '💳' : '🏦';
+      const label = p.name.length > 18 ? p.name.slice(0,18)+'…' : p.name;
+      return `<div class="fab-menu-item" onclick="closeFab();switchTab('${p.id}');setTimeout(()=>openAddTx('${p.id}'),120)">
+        <span class="fab-label">${label}</span>
+        <button>${icon}</button>
+      </div>`;
+    }).join('');
+    menu.innerHTML = items || `<div class="fab-menu-item"><span class="fab-label">${state.lang==='es'?'Agrega una cuenta primero':'Add an account first'}</span></div>`;
+    menu.style.display = 'flex';
+    overlay.classList.add('open');
+    btn.textContent = '✕';
+  } else {
+    closeFab();
+  }
+}
+function closeFab(){
+  _fabOpen = false;
+  const menu = document.getElementById('fabMenu');
+  const overlay = document.getElementById('fabOverlay');
+  const btn = document.getElementById('fabBtn');
+  if(menu) menu.style.display = 'none';
+  if(overlay) overlay.classList.remove('open');
+  if(btn) btn.textContent = '＋';
+}
 
 let state = {
   lang: 'es',
@@ -1746,17 +1824,30 @@ function renderCredit(page){
 // ── DEBIT PAGE ──
 function renderDebit(page){
   let totalExp=0, totalInc=0;
-  let running = page.startBalance||0;
+
+  // Sort transactions by date ascending for running balance calc
+  const pd = s => { const p=s.split('/'); return p.length===3?new Date(parseInt(p[2].length===2?'20'+p[2]:p[2]),parseInt(p[0])-1,parseInt(p[1])):new Date(0); };
+  const sorted = [...page.transactions].sort((a,b)=>pd(a.date||'1/1/00')-pd(b.date||'1/1/00'));
+  const runBal = {};
+  let runningCalc = page.startBalance||0;
+  for(const tx of sorted){
+    runningCalc += (tx.income||0) - (tx.expenses||0);
+    runBal[tx.id] = runningCalc;
+  }
+
+  // Totals
+  for(const tx of page.transactions){
+    totalExp += tx.expenses||0;
+    totalInc += tx.income||0;
+  }
 
   let rows = '';
   if(page.transactions.length===0){
     rows = `<tr><td colspan="7" class="no-data">${t('noTx')}</td></tr>`;
   } else {
     for(const tx of page.transactions){
-      const exp = tx.expenses||0; const inc = tx.income||0;
-      running += inc - exp;
-      totalExp += exp; totalInc += inc;
-      const balClass = running>=0?'amt-positive':'amt-negative';
+      const txRunBal = runBal[tx.id]||0;
+      const balClass = txRunBal>=0?'amt-positive':'amt-negative';
       const hi = tx.highlighted?'row-hi':'';
       rows += `<tr class="${hi}" data-txid="${tx.id}">
         <td><input class="cell-input date-in" value="${esc(tx.date)}" onchange="updateTxField('${page.id}','${tx.id}','date',this.value)"></td>
@@ -1764,7 +1855,7 @@ function renderDebit(page){
         <td><input class="cell-input" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:180px"></td>
         <td class="amt"><input class="cell-input num" value="${fmtNum(tx.expenses)}" onchange="updateTxField('${page.id}','${tx.id}','expenses',this.value)" onblur="renderAll()"></td>
         <td class="amt"><input class="cell-input num" value="${fmtNum(tx.income)}" onchange="updateTxField('${page.id}','${tx.id}','income',this.value)" onblur="renderAll()"></td>
-        <td class="amt ${balClass}">${fmt(running)}</td>
+        <td class="amt" style="font-weight:600;color:${txRunBal>=0?'var(--success)':'var(--danger)'}">${fmt(txRunBal)}</td>
         <td>
           <div class="cell-actions">
             <button class="btn btn-xs btn-ghost" onclick="toggleHighlight('${page.id}','${tx.id}')" title="${t('highlight')}">★</button>
@@ -1776,7 +1867,7 @@ function renderDebit(page){
     }
   }
 
-  const finalBal = running;
+  const finalBal = runningCalc;
   const balClass2 = finalBal>=0?'amt-positive':'amt-negative';
 
   const summaryHTML = `<div class="sum-grid">
@@ -2009,7 +2100,24 @@ function renderMaster(){
     <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir resumen':'Print summary'}</button>
   </div>`;
 
-  return printBtn + heroCard + snapshotRow + billsDueHTML + spendHTML + accountLinks;
+  // ── Next 7 days strip ──
+  const in7 = new Date(now); in7.setDate(in7.getDate() + 7);
+  const upcoming = allBills
+    .filter(b => !b.paid && b.dueDay >= now.getDate() && b.dueDay <= in7.getDate())
+    .sort((a,b) => a.dueDay - b.dueDay);
+
+  const upcomingStrip = upcoming.length ? `
+    <div style="background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;padding:10px 14px;margin-bottom:14px;display:flex;gap:10px;overflow-x:auto;-webkit-overflow-scrolling:touch">
+      <div style="font-size:11px;font-weight:700;color:#92400e;white-space:nowrap;align-self:center">⚡ ${es?'Próximos 7 días':'Next 7 days'}</div>
+      ${upcoming.map(b=>`
+        <div style="background:white;border:1px solid #fde68a;border-radius:6px;padding:7px 12px;white-space:nowrap;flex-shrink:0">
+          <div style="font-weight:700;font-size:12px">${esc(b.name)}</div>
+          <div style="font-size:11px;color:#92400e">${es?`día ${b.dueDay}`:`day ${b.dueDay}`}${b.amount?' · '+fmt(b.amount):''}</div>
+          ${b.autopay?`<div style="font-size:10px;color:#15803d;font-weight:600">AUTO</div>`:`<div style="font-size:10px;color:#b45309;font-weight:600">MANUAL</div>`}
+        </div>`).join('')}
+    </div>` : '';
+
+  return printBtn + heroCard + upcomingStrip + snapshotRow + billsDueHTML + spendHTML + accountLinks;
 }
 
 function attachInlineListeners(page){
@@ -4256,7 +4364,23 @@ function renderCards(){
       ${totalLimit ? `<div style="font-size:12px;opacity:.8;margin-top:4px">${es?`de ${fmt(totalLimit)} en crédito total`:`of ${fmt(totalLimit)} total credit`}</div>` : ''}
     </div>`;
 
-  const cardItems = cards.map(({p,bal,limit,avail,utilPct,utilColor})=>`
+  const cardItems = cards.map(({p,bal,limit,avail,utilPct,utilColor})=>{
+    const cardLimit = p.limit || 0;
+    const cardBal = computeCreditBalance(p);
+    const cardUtilPct = cardLimit > 0 ? Math.min(100, Math.round(cardBal / cardLimit * 100)) : null;
+    const cardUtilColor = cardUtilPct === null ? '' : cardUtilPct >= 90 ? '#dc2626' : cardUtilPct >= 30 ? '#d97706' : '#16a34a';
+    const utilBar = cardUtilPct !== null ? `
+      <div style="margin-top:8px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:3px">
+          <span style="color:${cardUtilColor};font-weight:700">${cardUtilPct}% ${es?'utilizado':'utilized'}</span>
+          <span style="color:var(--gray-400)">${fmt(cardBal)} / ${fmt(cardLimit)}</span>
+        </div>
+        <div style="height:6px;background:var(--gray-100);border-radius:3px">
+          <div style="height:6px;background:${cardUtilColor};border-radius:3px;width:${cardUtilPct}%;transition:width .4s"></div>
+        </div>
+        ${cardUtilPct >= 30 ? `<div style="font-size:10px;color:${cardUtilColor};margin-top:3px">⚠️ ${cardUtilPct>=90?(es?'¡Límite casi alcanzado!':'Near limit!'):(es?'Alto para score de crédito':'High for credit score')}</div>` : ''}
+      </div>` : `<div style="margin-top:8px;font-size:11px;color:var(--gray-400)"><button class="btn btn-xs btn-ghost" onclick="event.stopPropagation();openCardSetup('${p.id}')">${es?'⚙ Configurar límite':'⚙ Set credit limit'}</button></div>`;
+    return `
     <div class="card" style="margin-bottom:10px;padding:14px 16px;cursor:pointer" onclick="switchTab('${p.id}')">
       <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
         <div>
@@ -4269,11 +4393,9 @@ function renderCards(){
           ${p.paymentDueDay ? `<div style="font-size:11px;color:var(--gray-500);margin-top:6px">${es?'Pago vence':'Due'}</div><div style="font-weight:600;font-size:13px">${es?`Día ${p.paymentDueDay}`:`Day ${p.paymentDueDay}`}</div>${p.autopay?'<div style="font-size:10px;color:#16a34a;font-weight:600">✓ autopay</div>':'<div style="font-size:10px;color:#b45309;font-weight:600">⚠ manual</div>'}` : ''}
         </div>
       </div>
-      ${utilPct!==null ? `<div style="margin-top:10px">
-        <div style="display:flex;justify-content:space-between;font-size:10px;color:var(--gray-500);margin-bottom:3px"><span>${es?'Utilización':'Utilization'}</span><span style="color:${utilColor};font-weight:700">${utilPct}%</span></div>
-        <div style="height:6px;background:var(--gray-200);border-radius:3px"><div style="height:6px;background:${utilColor};border-radius:3px;width:${utilPct}%"></div></div>
-      </div>` : ''}
-    </div>`).join('');
+      ${utilBar}
+    </div>`;
+  }).join('');
 
   return `<div class="page-header" style="margin-bottom:12px">
     <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'💳 Mis Tarjetas':'💳 My Cards'}</div>
@@ -4968,6 +5090,7 @@ if(!state.activeTab) state.activeTab='master';
 if(!state.bills) state.bills=[];
 if(!state.lastRecurringCheck) state.lastRecurringCheck='';
 renderAll();
+applyTheme();
 updateSyncBadge();
 initFileSync();                          // async: restore main auto-save handle
 initBackupSync();                        // async: restore hard-backup handle
