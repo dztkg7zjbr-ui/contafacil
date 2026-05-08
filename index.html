@@ -236,6 +236,79 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 ::-webkit-scrollbar-thumb{background:var(--gray-300);border-radius:3px}
 ::-webkit-scrollbar-thumb:hover{background:var(--gray-400)}
 
+/* ── CALENDAR GRID ── */
+.cal-grid-header {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  text-align: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--gray-500);
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  margin-bottom: 2px;
+}
+.cal-hdr { padding: 4px 0; }
+.cal-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 2px;
+}
+.cal-cell {
+  min-height: 52px;
+  border-radius: 6px;
+  padding: 4px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  transition: background .1s;
+  position: relative;
+}
+.cal-cell:hover { background: var(--gray-100); }
+.cal-empty { cursor: default; min-height: 52px; }
+.cal-empty:hover { background: none; }
+.cal-day-num {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--gray-700);
+  line-height: 1.2;
+}
+.cal-today .cal-day-num {
+  background: var(--primary);
+  color: white;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  font-weight: 800;
+}
+.cal-today { background: #eff6ff; }
+.cal-all-paid { background: #f0fdf4; }
+.cal-dots { display: flex; gap: 3px; margin-top: 4px; flex-wrap: wrap; justify-content: center; }
+.cal-dot { width: 6px; height: 6px; border-radius: 50%; }
+.dot-paid  { background: #16a34a; }
+.dot-due   { background: #dc2626; }
+.dot-more  { background: var(--gray-400); }
+
+/* ── HEADER NAV BUTTONS ── */
+.header-nav { display:flex; gap:4px; align-items:center; }
+.hnav-btn {
+  background: none; border: none; cursor: pointer;
+  font-size: 18px; padding: 4px 6px; border-radius: 6px;
+  transition: background .15s; line-height: 1;
+  opacity: .7;
+}
+.hnav-btn:hover { background: rgba(0,0,0,.07); opacity:1; }
+.hnav-btn.active { background: rgba(37,99,235,.15); opacity:1; }
+
+/* ── TAB DRAG ── */
+.tab-drag-handle { cursor: grab; opacity: .4; font-size: 12px; margin-right: 2px; user-select:none; }
+.tab-item.drag-over { border-top: 3px solid var(--primary); }
+
 /* ── SYNC BADGE ── */
 .sync-badge{display:flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:4px 10px;border-radius:12px;background:var(--gray-100);color:var(--gray-600);cursor:pointer;border:1px solid var(--gray-200);white-space:nowrap;transition:all .2s;flex-shrink:0}
 .sync-badge:hover{background:var(--primary-light);color:var(--primary-dark);border-color:var(--primary)}
@@ -331,6 +404,11 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 <div id="app">
   <header class="app-header">
     <div class="app-logo">💰 ContaFácil</div>
+    <div class="header-nav" id="headerNav">
+      <button class="hnav-btn" id="hnav-cal"  onclick="switchTab('calendar')"  title="Pagos / Calendar">📅</button>
+      <button class="hnav-btn" id="hnav-cards" onclick="switchTab('cards')"   title="Tarjetas / Cards">💳</button>
+      <button class="hnav-btn" id="hnav-biz"  onclick="switchTab('business')" title="Negocio / Business">🏢</button>
+    </div>
     <div class="header-spacer"></div>
     <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
       <div class="sync-dot connected" id="syncDot"></div>
@@ -491,6 +569,35 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 </div>
 
 <div class="toast-wrap" id="toastWrap"></div>
+
+<!-- MODAL: Recurring transactions setup -->
+<div class="overlay" id="mRecurring">
+<div class="modal modal-lg">
+  <div class="modal-head">
+    <div class="modal-title" id="mRecurringTitle">Transacciones recurrentes</div>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('mRecurring')">✕</button>
+  </div>
+  <div class="modal-body" id="mRecurringBody"></div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal('mRecurring')">Cerrar</button>
+    <button class="btn btn-primary" id="mRecurringSave" style="display:none" onclick="saveRecurring()">Guardar</button>
+  </div>
+</div>
+</div>
+
+<!-- MODAL: Calendar day detail -->
+<div class="overlay" id="mCalDay">
+<div class="modal">
+  <div class="modal-head">
+    <div class="modal-title" id="mCalDayTitle">Día</div>
+    <button class="btn btn-ghost btn-sm" onclick="closeModal('mCalDay')">✕</button>
+  </div>
+  <div class="modal-body" id="mCalDayBody" style="max-height:70vh;overflow-y:auto"></div>
+  <div class="modal-foot">
+    <button class="btn btn-ghost" onclick="closeModal('mCalDay')">Cerrar</button>
+  </div>
+</div>
+</div>
 
 <!-- MODAL: Add/Edit Bill -->
 <div class="overlay" id="mBill">
@@ -736,7 +843,8 @@ let state = {
   lang: 'es',
   pages: [],        // [{id, name, type:'credit'|'debit', startBalance:0, transactions:[]}]
   activeTab: 'master', // page id or 'master'
-  bills: [],        // [{id, name, dueDay, amount, autopay, notes}]
+  bills: [],        // [{id, name, dueDay, amount, autopay, label, accountId, notes, paidMonths:{}}]
+  lastRecurringCheck: '', // 'YYYY-MM-DD' — prevents re-running on same day
 };
 let pendingConfirm = null;
 let editingTxId = null;
@@ -1302,28 +1410,32 @@ function renderAll(){ renderTabs(); renderContent(); updateLangUI(); }
 
 function renderTabs(){
   const bar = document.getElementById('tabBar');
-  const es = state.lang==='es';
+  // Update header nav active states
+  ['cal','cards','biz'].forEach(k=>{
+    const el = document.getElementById('hnav-'+k);
+    if(el) el.classList.remove('active');
+  });
+  const specialMap = {calendar:'cal', cards:'cards', business:'biz'};
+  if(specialMap[state.activeTab]){
+    const el = document.getElementById('hnav-'+specialMap[state.activeTab]);
+    if(el) el.classList.add('active');
+  }
+
   let html = `<div class="tab-item ${state.activeTab==='master'?'active':''}" onclick="switchTab('master')">
     🏠 <span>${t('master')}</span><span class="tab-badge badge-master">${state.pages.length}</span>
-  </div>`;
-  // Special tabs: Calendar (always), Cards (only if credit pages exist), Business (always)
-  html += `<div class="tab-item ${state.activeTab==='calendar'?'active':''}" onclick="switchTab('calendar')">
-    📅 <span>${es?'Pagos':'Calendar'}</span>
-  </div>`;
-  const hasCreditPages = state.pages.some(p=>p.type==='credit');
-  if(hasCreditPages){
-    html += `<div class="tab-item ${state.activeTab==='cards'?'active':''}" onclick="switchTab('cards')">
-      💳 <span>${es?'Tarjetas':'Cards'}</span>
-    </div>`;
-  }
-  html += `<div class="tab-item ${state.activeTab==='business'?'active':''}" onclick="switchTab('business')">
-    🏢 <span>${es?'Negocio':'Business'}</span>
   </div>`;
   for(const p of state.pages){
     const active = state.activeTab===p.id ? 'active' : '';
     const badge = p.type==='credit'?'badge-credit':'badge-debit';
     const icon = p.type==='credit'?'💳':'🏦';
-    html += `<div class="tab-item ${active}" onclick="switchTab('${p.id}')">
+    html += `<div class="tab-item ${active}" draggable="true"
+      data-pageid="${p.id}"
+      ondragstart="tabDragStart(event,'${p.id}')"
+      ondragover="tabDragOver(event)"
+      ondrop="tabDrop(event,'${p.id}')"
+      ondragend="tabDragEnd(event)"
+      onclick="switchTab('${p.id}')">
+      <span class="tab-drag-handle">⠿</span>
       ${icon} <span>${esc(p.name)}</span>
       <span class="tab-badge ${badge}">${p.type==='credit'?t('credit').slice(0,3):t('debit').slice(0,3)}</span>
       <button class="tab-close" onclick="event.stopPropagation();askDeletePage('${p.id}')" title="${t('deletePage')}">✕</button>
@@ -1360,6 +1472,7 @@ function renderEmpty(){
 function renderPageHeader(page){
   const type = page.type==='credit'?t('credit'):t('debit');
   const badge = page.type==='credit'?'type-credit':'type-debit';
+  const es = state.lang==='es';
   return `<div class="page-header">
     <input class="page-title-input" value="${esc(page.name)}" onchange="renamePage('${page.id}',this.value)" title="Haz clic para renombrar">
     <span class="type-badge ${badge}">${type}</span>
@@ -1367,6 +1480,7 @@ function renderPageHeader(page){
       <button class="btn btn-outline btn-sm" onclick="openAddTx('${page.id}')">${t('addTx')}</button>
       <button class="btn btn-outline btn-sm" onclick="openReceipt('${page.id}')">${t('uploadReceipt')}</button>
       <button class="btn btn-outline btn-sm" onclick="openStatement('${page.id}')">${t('compareStmt')}</button>
+      <button class="btn btn-outline btn-sm" onclick="openRecurringModal('${page.id}')">⟳ ${es?'Recurrentes':'Recurring'}</button>
       <button class="btn btn-outline btn-sm" onclick="exportCSV('${page.id}')">${t('exportCSV')}</button>
     </div>
   </div>`;
@@ -1709,6 +1823,42 @@ function attachInlineListeners(page){
 // ═══════════════════════════════════════════════
 // PAGE ACTIONS
 // ═══════════════════════════════════════════════
+// ═══════════════════════════════════════════════
+// TAB DRAG TO REORDER
+// ═══════════════════════════════════════════════
+let dragSrcPageId = null;
+
+function tabDragStart(e, pageId){
+  dragSrcPageId = pageId;
+  e.dataTransfer.effectAllowed = 'move';
+  e.currentTarget.style.opacity = '0.4';
+}
+function tabDragEnd(e){
+  e.currentTarget.style.opacity = '';
+  document.querySelectorAll('.tab-item').forEach(el=>el.classList.remove('drag-over'));
+}
+function tabDragOver(e){
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  document.querySelectorAll('.tab-item').forEach(el=>el.classList.remove('drag-over'));
+  e.currentTarget.classList.add('drag-over');
+  return false;
+}
+function tabDrop(e, targetPageId){
+  e.stopPropagation();
+  if(dragSrcPageId && dragSrcPageId !== targetPageId){
+    const srcIdx = state.pages.findIndex(p=>p.id===dragSrcPageId);
+    const tgtIdx = state.pages.findIndex(p=>p.id===targetPageId);
+    if(srcIdx>-1 && tgtIdx>-1){
+      const [moved] = state.pages.splice(srcIdx,1);
+      state.pages.splice(tgtIdx,0,moved);
+      save(); renderAll();
+    }
+  }
+  document.querySelectorAll('.tab-item').forEach(el=>el.classList.remove('drag-over'));
+  return false;
+}
+
 function switchTab(id){
   // Special tabs don't require a matching page
   const SPECIAL = ['master','calendar','cards','business'];
@@ -3167,125 +3317,288 @@ function computeCreditBalance(page){
 }
 
 // ═══════════════════════════════════════════════
-// FEATURE 1: PAYMENT CALENDAR
+// FEATURE 1: PAYMENT CALENDAR (REAL GRID)
 // ═══════════════════════════════════════════════
-function renderCalendar(){
-  const es = state.lang==='es';
-  const today = new Date();
-  const todayDay = today.getDate();
+// Calendar navigation state (not persisted)
+let calYear  = new Date().getFullYear();
+let calMonth = new Date().getMonth(); // 0-indexed
 
-  function daysUntil(dueDay){
-    if(!dueDay) return 999;
-    let d = dueDay - todayDay;
-    if(d < 0) d += 30;
-    return d;
+function calPrev(){ calMonth--; if(calMonth<0){calMonth=11;calYear--;} renderContent(); }
+function calNext(){ calMonth++; if(calMonth>11){calMonth=0;calYear++;} renderContent(); }
+
+function renderCalendar(){
+  const es   = state.lang==='es';
+  const today = new Date();
+  const todayY = today.getFullYear();
+  const todayM = today.getMonth();
+  const todayD = today.getDate();
+
+  const monthNames = es
+    ? ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const dayHeaders = es
+    ? ['Dom','Lun','Mar','Mié','Jue','Vie','Sáb']
+    : ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+
+  // Days in current month
+  const daysInMonth = new Date(calYear, calMonth+1, 0).getDate();
+  // Day of week of 1st (0=Sun)
+  const firstDow = new Date(calYear, calMonth, 1).getDay();
+
+  // Build a map: day → array of {type:'bill'|'card', id, name, autopay, paid, amount}
+  const calKey = `${calYear}-${String(calMonth+1).padStart(2,'0')}`;
+  const dayItems = {}; // { 1: [...], 15: [...] }
+
+  // Bills
+  for(const b of (state.bills||[])){
+    const day = b.dueDay;
+    if(!day||day<1||day>daysInMonth) continue;
+    if(!dayItems[day]) dayItems[day]=[];
+    const paid = !!(b.paidMonths && b.paidMonths[calKey]);
+    dayItems[day].push({type:'bill',id:b.id,name:b.name,autopay:b.autopay,paid,amount:b.amount,label:b.label||'',accountId:b.accountId||null});
   }
 
-  const items = [];
-
+  // Credit card due dates
   for(const p of state.pages){
-    if(p.type!=='credit') continue;
-    if(p.paymentDueDay){
-      const d = daysUntil(p.paymentDueDay);
-      items.push({
-        id: 'cc_'+p.id,
-        name: p.name,
-        dueDay: p.paymentDueDay,
-        daysUntil: d,
-        autopay: p.autopay||false,
-        amount: null,
-        type: 'credit',
-        statementClose: p.statementCloseDay||null,
-        notes: p.notes||''
-      });
+    if(p.type!=='credit'||!p.paymentDueDay) continue;
+    const day = p.paymentDueDay;
+    if(day<1||day>daysInMonth) continue;
+    if(!dayItems[day]) dayItems[day]=[];
+    const paid = !!(p.paidMonths && p.paidMonths[calKey]);
+    dayItems[day].push({type:'card',id:p.id,name:p.name,autopay:p.autopay,paid,amount:null});
+  }
+
+  // Build calendar grid cells
+  let cells = '';
+  // Empty cells for days before 1st
+  for(let i=0;i<firstDow;i++){
+    cells += `<div class="cal-cell cal-empty"></div>`;
+  }
+  for(let d=1;d<=daysInMonth;d++){
+    const isToday = (d===todayD && calMonth===todayM && calYear===todayY);
+    const items   = dayItems[d]||[];
+    const hasUnpaid = items.some(i=>!i.paid);
+    const allPaid   = items.length>0 && items.every(i=>i.paid);
+
+    // Dot indicators
+    let dots = '';
+    if(items.length){
+      dots = `<div class="cal-dots">`;
+      const shown = items.slice(0,3);
+      for(const item of shown){
+        dots += `<div class="cal-dot ${item.paid?'dot-paid':'dot-due'}"></div>`;
+      }
+      if(items.length>3) dots += `<div class="cal-dot dot-more"></div>`;
+      dots += `</div>`;
+    }
+
+    const cellClass = [
+      'cal-cell',
+      isToday   ? 'cal-today' : '',
+      allPaid   ? 'cal-all-paid' : '',
+      hasUnpaid ? 'cal-has-due' : '',
+    ].filter(Boolean).join(' ');
+
+    cells += `<div class="${cellClass}" onclick="openCalDay(${d},${calMonth},${calYear})">
+      <div class="cal-day-num">${d}</div>
+      ${dots}
+    </div>`;
+  }
+
+  // Upcoming list (this month, unpaid, from today)
+  const upcomingItems = [];
+  for(const [day, items] of Object.entries(dayItems)){
+    const d = parseInt(day);
+    for(const item of items){
+      if(!item.paid){
+        upcomingItems.push({...item, day: d, daysUntil: d - todayD});
+      }
     }
   }
+  upcomingItems.sort((a,b)=>a.day-b.day);
 
-  for(const b of (state.bills||[])){
-    items.push({
-      id: 'bill_'+b.id,
-      billId: b.id,
-      name: b.name,
-      dueDay: b.dueDay,
-      daysUntil: daysUntil(b.dueDay),
-      autopay: b.autopay||false,
-      amount: b.amount||null,
-      type: 'bill',
-      notes: b.notes||''
-    });
-  }
-
-  items.sort((a,b)=>a.daysUntil-b.daysUntil);
-
-  function itemRow(item){
-    const dueBadge = item.daysUntil===0
-      ? `<span style="background:#fee2e2;color:#dc2626;padding:2px 6px;border-radius:4px;font-size:11px;font-weight:700">${es?'¡Hoy!':'Today!'}</span>`
-      : item.daysUntil<=3
-      ? `<span style="background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:11px">${es?`en ${item.daysUntil}d`:`in ${item.daysUntil}d`}</span>`
-      : item.daysUntil<=7
-      ? `<span style="background:#dbeafe;color:#1d4ed8;padding:2px 6px;border-radius:4px;font-size:11px">${es?`en ${item.daysUntil}d`:`in ${item.daysUntil}d`}</span>`
-      : `<span style="font-size:12px;color:var(--gray-500)">${es?`día ${item.dueDay}`:`day ${item.dueDay}`}</span>`;
-
-    const autopayBadge = item.autopay
-      ? `<span style="background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">✓ ${es?'AUTOPAGO':'AUTOPAY'}</span>`
-      : `<span style="background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600">⚠ ${es?'MANUAL':'MANUAL'}</span>`;
-
-    const icon = item.type==='credit' ? '💳' : '📋';
-    const amtStr = item.amount ? fmt(item.amount) : '';
-    const deleteBtn = item.type==='bill'
-      ? `<button class="btn btn-xs btn-danger" onclick="deleteBill('${item.billId}')">✕</button>
-         <button class="btn btn-xs btn-outline" onclick="editBill('${item.billId}')">✎</button>`
-      : `<button class="btn btn-xs btn-outline" onclick="openCardDueDates('${item.id.replace('cc_','')}')">✎</button>`;
-
-    return `<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;border-bottom:1px solid var(--gray-100)">
-      <span style="font-size:18px">${icon}</span>
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:600;font-size:14px">${esc(item.name)}</div>
-        <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap;margin-top:3px">
-          ${dueBadge}
-          ${autopayBadge}
-          ${amtStr ? `<span style="font-size:12px;font-weight:600;color:var(--gray-700)">${amtStr}</span>` : ''}
-          ${item.statementClose ? `<span style="font-size:11px;color:var(--gray-400)">${es?`cierre día ${item.statementClose}`:`closes day ${item.statementClose}`}</span>` : ''}
-        </div>
-      </div>
-      <div style="display:flex;gap:4px">${deleteBtn}</div>
-    </div>`;
-  }
-
-  const thisWeek  = items.filter(i=>i.daysUntil<=7);
-  const thisMonth = items.filter(i=>i.daysUntil>7 && i.daysUntil<=30);
-  const later     = items.filter(i=>i.daysUntil>30);
-
-  function section(title, color, list){
-    if(!list.length) return '';
-    return `<div class="card" style="margin-bottom:12px">
-      <div style="font-size:12px;font-weight:700;color:${color};text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;border-bottom:2px solid ${color}20">${title}</div>
-      ${list.map(itemRow).join('')}
-    </div>`;
-  }
-
-  const noItems = items.length===0;
-  const mainContent = noItems
-    ? `<div style="text-align:center;padding:40px 20px;color:var(--gray-400)">
-        <div style="font-size:40px;margin-bottom:12px">📅</div>
-        <div style="font-weight:600;margin-bottom:8px">${es?'Sin pagos registrados':'No payments yet'}</div>
-        <div style="font-size:13px">${es?'Agrega tus fechas de pago abajo':'Add your payment due dates below'}</div>
-      </div>`
-    : section(es?'⚡ Esta semana':'⚡ This week','#dc2626',thisWeek)
-    + section(es?'📅 Este mes':'📅 This month','#2563eb',thisMonth)
-    + section(es?'🔮 Más adelante':'🔮 Later','#6b7280',later);
+  const upcomingHTML = upcomingItems.length ? `
+    <div class="card" style="margin-top:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;border-bottom:1px solid var(--gray-100)">${es?'Próximos pagos pendientes':'Upcoming unpaid'}</div>
+      ${upcomingItems.slice(0,8).map(item=>{
+        const dStr = item.daysUntil<0
+          ? `<span style="color:#dc2626;font-weight:700">${es?'Vencido':'Overdue'}</span>`
+          : item.daysUntil===0
+          ? `<span style="color:#dc2626;font-weight:700">${es?'¡Hoy!':'Today!'}</span>`
+          : item.daysUntil<=3
+          ? `<span style="color:#f59e0b;font-weight:600">${es?`en ${item.daysUntil}d`:`in ${item.daysUntil}d`}</span>`
+          : `<span style="color:var(--gray-500)">${es?`día ${item.day}`:`day ${item.day}`}</span>`;
+        const icon = item.type==='card'?'💳':'📋';
+        const apBadge = item.autopay
+          ? `<span style="font-size:10px;background:#dcfce7;color:#16a34a;padding:1px 5px;border-radius:3px">AUTO</span>`
+          : `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 5px;border-radius:3px">MANUAL</span>`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--gray-100)">
+          <span>${icon}</span>
+          <div style="flex:1">
+            <span style="font-weight:600;font-size:13px">${esc(item.name)}</span>
+            ${item.label?`<span style="font-size:10px;color:var(--gray-400);margin-left:4px">${esc(item.label)}</span>`:''}
+          </div>
+          ${dStr} ${apBadge}
+          ${item.amount?`<span style="font-weight:600;font-size:13px">${fmt(item.amount)}</span>`:''}
+          <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();openCalDay(${item.day},${calMonth},${calYear})">Ver</button>
+        </div>`;
+      }).join('')}
+    </div>` : '';
 
   return `
     <div class="page-header">
-      <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'📅 Calendario de Pagos':'📅 Payment Calendar'}</div>
+      <div style="display:flex;align-items:center;gap:12px">
+        <button class="btn btn-ghost btn-sm" onclick="calPrev()">‹</button>
+        <span style="font-size:17px;font-weight:700;min-width:150px;text-align:center">${monthNames[calMonth]} ${calYear}</span>
+        <button class="btn btn-ghost btn-sm" onclick="calNext()">›</button>
+      </div>
       <div class="page-actions">
         <button class="btn btn-primary btn-sm" onclick="openAddBill()">+ ${es?'Agregar pago':'Add payment'}</button>
       </div>
     </div>
-    ${mainContent}
-    ${!noItems ? `<div style="font-size:11px;color:var(--gray-400);text-align:center;margin-top:8px;margin-bottom:16px">
-      ${es?'Las tarjetas de crédito se actualizan desde cada página de tarjeta.':'Credit cards are configured from each card page.'}
-    </div>` : ''}`;
+    <div class="card" style="padding:8px">
+      <div class="cal-grid-header">
+        ${dayHeaders.map(d=>`<div class="cal-hdr">${d}</div>`).join('')}
+      </div>
+      <div class="cal-grid">
+        ${cells}
+      </div>
+    </div>
+    ${upcomingHTML}`;
+}
+
+// ═══════════════════════════════════════════════
+// CALENDAR DAY MODAL
+// ═══════════════════════════════════════════════
+let _calDayOpen = null; // {day, month, year}
+
+function openCalDay(day, month, year){
+  _calDayOpen = {day, month, year};
+  _renderCalDayModal(day, month, year);
+  openModal('mCalDay');
+}
+
+function _renderCalDayModal(day, month, year){
+  const es = state.lang==='es';
+  const monthNames = es
+    ? ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  document.getElementById('mCalDayTitle').textContent = `${day} ${monthNames[month]} ${year}`;
+  const calKey = `${year}-${String(month+1).padStart(2,'0')}`;
+
+  // Bills due this day
+  const dayBills = (state.bills||[]).filter(b=>b.dueDay===day);
+  // Credit cards due this day
+  const dayCards = state.pages.filter(p=>p.type==='credit'&&p.paymentDueDay===day);
+
+  let html = '';
+
+  if(!dayBills.length && !dayCards.length){
+    html = `<div style="text-align:center;padding:30px;color:var(--gray-400)">${es?'Sin pagos este día.':'No payments this day.'}</div>`;
+  }
+
+  // Credit card due payments
+  for(const p of dayCards){
+    const paid = !!(p.paidMonths && p.paidMonths[calKey]);
+    const bal  = computeCreditBalance(p);
+    html += `<div style="padding:12px;border-bottom:1px solid var(--gray-100)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:700">💳 ${esc(p.name)}</div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:2px">${es?'Pago vence':'Payment due'} · ${es?'Saldo actual':'Balance'}: <b>${fmt(bal)}</b></div>
+          <div style="margin-top:4px">${p.autopay
+            ?`<span style="font-size:11px;background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-weight:600">✓ ${es?'Autopago':'Autopay'}</span>`
+            :`<span style="font-size:11px;background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-weight:600">⚠ ${es?'Pago manual':'Manual payment'}</span>`}
+          </div>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <button class="btn btn-sm ${paid?'btn-outline':'btn-primary'}"
+            onclick="toggleCardPaid('${p.id}','${calKey}')">
+            ${paid?(es?'✓ Pagado':'✓ Paid'):(es?'Marcar pagado':'Mark paid')}
+          </button>
+          <button class="btn btn-xs btn-ghost" onclick="closeModal('mCalDay');openAddTx('${p.id}')">
+            + ${es?'Agregar pago':'Log payment'}
+          </button>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // Bills
+  for(const b of dayBills){
+    const paid = !!(b.paidMonths && b.paidMonths[calKey]);
+    let acctName = '';
+    if(b.accountId){
+      const acct = state.pages.find(p=>p.id===b.accountId);
+      if(acct) acctName = acct.name;
+    }
+    html += `<div style="padding:12px;border-bottom:1px solid var(--gray-100)">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+        <div>
+          <div style="font-size:14px;font-weight:700">📋 ${esc(b.name)}</div>
+          ${b.label?`<div style="font-size:11px;color:var(--gray-400)">${esc(b.label)}</div>`:''}
+          <div style="display:flex;gap:6px;align-items:center;margin-top:4px;flex-wrap:wrap">
+            ${b.amount?`<span style="font-weight:600;font-size:13px">${fmt(b.amount)}</span>`:''}
+            ${b.autopay
+              ?`<span style="font-size:11px;background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-weight:600">✓ AUTO</span>`
+              :`<span style="font-size:11px;background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-weight:600">⚠ MANUAL</span>`}
+            ${acctName?`<span style="font-size:11px;color:var(--gray-500)">← ${esc(acctName)}</span>`:''}
+          </div>
+        </div>
+        <button class="btn btn-sm ${paid?'btn-outline':'btn-primary'}"
+          onclick="toggleBillPaid('${b.id}','${calKey}')">
+          ${paid?(es?'✓ Pagado':'✓ Paid'):(es?'Marcar pagado':'Mark paid')}
+        </button>
+      </div>
+    </div>`;
+  }
+
+  // Transactions logged on this day across all accounts
+  const dateStr1 = `${String(month+1).padStart(2,'0')}/${String(day).padStart(2,'0')}/${year}`;
+  const dateStr2 = `${String(month+1).padStart(2,'0')}/${String(day).padStart(2,'0')}/${String(year).slice(2)}`;
+  const txForDay = [];
+  for(const p of state.pages){
+    for(const tx of p.transactions){
+      if(tx.date===dateStr1||tx.date===dateStr2){
+        txForDay.push({...tx,accountName:p.name,pageId:p.id,pageType:p.type});
+      }
+    }
+  }
+  if(txForDay.length){
+    html += `<div style="padding:10px 12px;font-size:11px;font-weight:700;color:var(--gray-500);text-transform:uppercase;border-top:2px solid var(--gray-100);margin-top:4px">${es?'Transacciones registradas':'Logged transactions'}</div>`;
+    for(const tx of txForDay){
+      const amtStr = tx.pageType==='credit'
+        ? fmt(tx.amount)
+        : tx.income ? `+${fmt(tx.income)}` : `-${fmt(tx.expenses)}`;
+      html += `<div style="padding:8px 12px;border-bottom:1px solid var(--gray-100);display:flex;justify-content:space-between;align-items:center">
+        <div>
+          <span style="font-size:10px;background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:3px;margin-right:4px">${esc(tx.accountName)}</span>
+          <span style="font-size:13px">${esc(tx.detail)}</span>
+        </div>
+        <span style="font-weight:600;font-size:13px">${amtStr}</span>
+      </div>`;
+    }
+  }
+
+  document.getElementById('mCalDayBody').innerHTML = html;
+}
+
+function toggleBillPaid(billId, calKey){
+  const b = (state.bills||[]).find(x=>x.id===billId);
+  if(!b) return;
+  if(!b.paidMonths) b.paidMonths={};
+  b.paidMonths[calKey] = !b.paidMonths[calKey];
+  save(); renderContent();
+  if(_calDayOpen) _renderCalDayModal(_calDayOpen.day, _calDayOpen.month, _calDayOpen.year);
+}
+
+function toggleCardPaid(pageId, calKey){
+  const p = state.pages.find(x=>x.id===pageId);
+  if(!p) return;
+  if(!p.paidMonths) p.paidMonths={};
+  p.paidMonths[calKey] = !p.paidMonths[calKey];
+  save(); renderContent();
+  if(_calDayOpen) _renderCalDayModal(_calDayOpen.day, _calDayOpen.month, _calDayOpen.year);
 }
 
 function openAddBill(){
@@ -3301,10 +3614,21 @@ function editBill(id){
 }
 function buildBillForm(bill){
   const es = state.lang==='es';
-  document.getElementById('mBillTitle').textContent = bill ? (es?'Editar pago':'Edit payment') : (es?'Agregar pago':'Add payment');
+  document.getElementById('mBillTitle').textContent = bill
+    ? (es?'Editar pago':'Edit payment')
+    : (es?'Agregar pago':'Add payment');
+
+  // Build account options for autopay linking
+  const acctOpts = state.pages.map(p=>
+    `<option value="${p.id}" ${bill&&bill.accountId===p.id?'selected':''}>${esc(p.name)}</option>`
+  ).join('');
+
   document.getElementById('mBillBody').innerHTML = `
     <div class="fg"><label>${es?'Nombre del pago':'Payment name'}</label>
       <input class="fc" id="bill-name" type="text" placeholder="${es?'Ej: FPL, Renta, Netflix':'E.g. FPL, Rent, Netflix'}" value="${esc(bill?bill.name:'')}">
+    </div>
+    <div class="fg"><label>${es?'Etiqueta / Categoría (opcional)':'Label / Category (optional)'}</label>
+      <input class="fc" id="bill-label" type="text" placeholder="${es?'Ej: Utilidad, Seguro, Tarjeta':'E.g. Utility, Insurance, Card'}" value="${esc(bill?(bill.label||''):'')}" >
     </div>
     <div class="form-row">
       <div class="fg"><label>${es?'Día de vencimiento (1-31)':'Due day (1-31)'}</label>
@@ -3316,30 +3640,40 @@ function buildBillForm(bill){
     </div>
     <div class="fg" style="margin-top:4px">
       <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:600">
-        <input type="checkbox" id="bill-autopay" ${bill&&bill.autopay?'checked':''} style="width:16px;height:16px">
+        <input type="checkbox" id="bill-autopay" ${bill&&bill.autopay?'checked':''} style="width:16px;height:16px"
+          onchange="document.getElementById('bill-acct-row').style.display=this.checked?'block':'none'">
         ✓ ${es?'En autopago':'On autopay'}
       </label>
     </div>
+    <div class="fg" id="bill-acct-row" style="display:${bill&&bill.autopay?'block':'none'}">
+      <label>${es?'Cuenta de autopago':'Autopay account'}</label>
+      <select class="fc" id="bill-acct">
+        <option value="">${es?'— Sin asignar —':'— Not linked —'}</option>
+        ${acctOpts}
+      </select>
+    </div>
     <div class="fg"><label>${es?'Notas (opcional)':'Notes (optional)'}</label>
-      <input class="fc" id="bill-notes" type="text" value="${esc(bill?bill.notes||'':'')}">
-    </div>`;
+      <input class="fc" id="bill-notes" type="text" value="${esc(bill?(bill.notes||''):'')}" ></div>`;
   setTimeout(()=>document.getElementById('bill-name')?.focus(),150);
 }
+
 function saveBill(){
   if(!state.bills) state.bills=[];
   const es = state.lang==='es';
-  const name = document.getElementById('bill-name')?.value.trim()||'';
-  const dueDay = parseInt(document.getElementById('bill-day')?.value)||0;
-  const amount = parseAmt(document.getElementById('bill-amount')?.value)||null;
+  const name    = document.getElementById('bill-name')?.value.trim()||'';
+  const label   = document.getElementById('bill-label')?.value.trim()||'';
+  const dueDay  = parseInt(document.getElementById('bill-day')?.value)||0;
+  const amount  = parseAmt(document.getElementById('bill-amount')?.value)||null;
   const autopay = document.getElementById('bill-autopay')?.checked||false;
-  const notes = document.getElementById('bill-notes')?.value.trim()||'';
+  const accountId = document.getElementById('bill-acct')?.value||'';
+  const notes   = document.getElementById('bill-notes')?.value.trim()||'';
   if(!name){ toast(es?'Escribe un nombre.':'Enter a name.','warn'); return; }
   if(!dueDay||dueDay<1||dueDay>31){ toast(es?'Día inválido (1-31).':'Invalid day (1-31).','warn'); return; }
   if(editingBillId){
     const b = state.bills.find(x=>x.id===editingBillId);
-    if(b) Object.assign(b,{name,dueDay,amount,autopay,notes});
+    if(b) Object.assign(b,{name,label,dueDay,amount,autopay,accountId,notes});
   } else {
-    state.bills.push({id:uid(),name,dueDay,amount,autopay,notes});
+    state.bills.push({id:uid(),name,label,dueDay,amount,autopay,accountId,notes,paidMonths:{}});
   }
   save(); renderAll(); closeModal('mBill');
   toast(es?'✅ Guardado':'✅ Saved','ok');
@@ -3594,14 +3928,283 @@ function renderBusiness(){
 }
 
 // ═══════════════════════════════════════════════
+// FEATURE 4: RECURRING TRANSACTIONS
+// ═══════════════════════════════════════════════
+function processRecurringTransactions(){
+  const today  = new Date();
+  const todayY = today.getFullYear();
+  const todayM = today.getMonth()+1;  // 1-12
+  const todayD = today.getDate();
+  const todayDow = today.getDay();    // 0=Sun
+  const todayKey = `${todayY}-${String(todayM).padStart(2,'0')}-${String(todayD).padStart(2,'0')}`;
+  const todayFmt = `${String(todayM).padStart(2,'0')}/${String(todayD).padStart(2,'0')}/${todayY}`;
+
+  if(state.lastRecurringCheck === todayKey) return; // already ran today
+
+  let anyCreated = false;
+
+  for(const page of state.pages){
+    for(const rec of (page.recurring||[])){
+      if(!rec.active) continue;
+      if(rec.lastCreatedDate === todayKey) continue; // already created today
+
+      let shouldFire = false;
+      switch(rec.frequency){
+        case 'monthly':
+          shouldFire = (todayD === rec.dayOfMonth);
+          break;
+        case 'yearly':
+          shouldFire = (todayD === rec.dayOfMonth && todayM === rec.monthOfYear);
+          break;
+        case 'weekly':
+          shouldFire = (todayDow === rec.dayOfWeek);
+          break;
+        case 'biweekly':
+          if(todayDow === rec.dayOfWeek){
+            if(!rec.lastCreatedDate){
+              shouldFire = true;
+            } else {
+              const last = new Date(rec.lastCreatedDate);
+              const diffDays = Math.round((today - last)/(1000*60*60*24));
+              shouldFire = diffDays >= 13;
+            }
+          }
+          break;
+      }
+
+      if(!shouldFire) continue;
+
+      // Create the transaction
+      if(page.type==='credit'){
+        page.transactions.push({
+          id:uid(), date:todayFmt, detail:rec.detail,
+          amount:rec.amount||0, category:rec.category||'OTROS',
+          notes:rec.notes||'', highlighted:false,
+          business:rec.business||false, txType:rec.txType||'purchase',
+          fromRecurring:rec.id
+        });
+      } else {
+        page.transactions.push({
+          id:uid(), date:todayFmt, detail:rec.detail,
+          expenses:rec.expenses||null, income:rec.income||null,
+          checkNum:'', notes:rec.notes||'', highlighted:false,
+          business:rec.business||false, fromRecurring:rec.id
+        });
+      }
+      rec.lastCreatedDate = todayKey;
+      anyCreated = true;
+    }
+  }
+
+  state.lastRecurringCheck = todayKey;
+  if(anyCreated){
+    save(); renderAll();
+    const es = state.lang==='es';
+    toast(es?'📅 Transacciones recurrentes agregadas automáticamente':'📅 Recurring transactions auto-added','ok',4000);
+  } else {
+    save();
+  }
+}
+
+let editingRecurPageId = null;
+let editingRecurId     = null;
+
+function openRecurringModal(pageId){
+  editingRecurPageId = pageId;
+  editingRecurId = null;
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  document.getElementById('mRecurringTitle').textContent =
+    es ? `Recurrentes — ${p.name}` : `Recurring — ${p.name}`;
+  renderRecurringList(p);
+  document.getElementById('mRecurringSave').style.display='none';
+  openModal('mRecurring');
+}
+
+function renderRecurringList(page){
+  const es = state.lang==='es';
+  const recList = page.recurring||[];
+  const freqLabel = {monthly:es?'Mensual':'Monthly',weekly:es?'Semanal':'Weekly',biweekly:es?'Quincenal':'Biweekly',yearly:es?'Anual':'Yearly'};
+  let html = '';
+  if(!recList.length){
+    html = `<div style="text-align:center;padding:20px;color:var(--gray-400)">${es?'No hay transacciones recurrentes.':'No recurring transactions.'}</div>`;
+  } else {
+    html = recList.map(r=>`
+      <div style="display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--gray-100)">
+        <div style="flex:1">
+          <div style="font-weight:600">${esc(r.detail)}</div>
+          <div style="font-size:12px;color:var(--gray-500)">${freqLabel[r.frequency]||r.frequency} · ${page.type==='credit'?fmt(r.amount||0):`${r.expenses?'-'+fmt(r.expenses):''}${r.income?'+'+fmt(r.income):''}`}</div>
+        </div>
+        <label style="display:flex;align-items:center;gap:4px;cursor:pointer;font-size:12px">
+          <input type="checkbox" ${r.active?'checked':''} onchange="toggleRecurActive('${page.id}','${r.id}',this.checked)"> ${es?'Activo':'Active'}
+        </label>
+        <button class="btn btn-xs btn-outline" onclick="editRecurring('${page.id}','${r.id}')">✎</button>
+        <button class="btn btn-xs btn-danger" onclick="deleteRecurring('${page.id}','${r.id}')">✕</button>
+      </div>`).join('');
+  }
+  html += `<div style="margin-top:12px"><button class="btn btn-primary btn-sm" onclick="newRecurring('${page.id}')">+ ${es?'Agregar recurrente':'Add recurring'}</button></div>`;
+  document.getElementById('mRecurringBody').innerHTML = html;
+}
+
+function newRecurring(pageId){
+  editingRecurId = null;
+  buildRecurringForm(pageId, null);
+}
+
+function editRecurring(pageId, recId){
+  editingRecurId = recId;
+  const p = state.pages.find(x=>x.id===pageId);
+  const r = (p?.recurring||[]).find(x=>x.id===recId);
+  buildRecurringForm(pageId, r);
+}
+
+function buildRecurringForm(pageId, rec){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const es = state.lang==='es';
+  editingRecurPageId = pageId;
+
+  const freqOpts = [
+    {val:'monthly', label:es?'Mensual (mismo día cada mes)':'Monthly (same day each month)'},
+    {val:'weekly',  label:es?'Semanal':'Weekly'},
+    {val:'biweekly',label:es?'Quincenal (cada 2 semanas)':'Biweekly (every 2 weeks)'},
+    {val:'yearly',  label:es?'Anual':'Yearly'},
+  ].map(o=>`<option value="${o.val}" ${rec&&rec.frequency===o.val?'selected':''}>${o.label}</option>`).join('');
+
+  const dowOpts = [es?'Domingo':'Sunday',es?'Lunes':'Monday',es?'Martes':'Tuesday',es?'Miércoles':'Wednesday',es?'Jueves':'Thursday',es?'Viernes':'Friday',es?'Sábado':'Saturday']
+    .map((d,i)=>`<option value="${i}" ${rec&&rec.dayOfWeek===i?'selected':''}>${d}</option>`).join('');
+
+  const monthOpts = (es?['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']:['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'])
+    .map((m,i)=>`<option value="${i+1}" ${rec&&rec.monthOfYear===i+1?'selected':''}>${m}</option>`).join('');
+
+  let amountFields = '';
+  if(p.type==='credit'){
+    const catOpts = CREDIT_CATS.map(c=>`<option value="${c.id}" ${rec&&rec.category===c.id?'selected':''}>${es?c.es:c.en}</option>`).join('');
+    amountFields = `
+      <div class="form-row">
+        <div class="fg"><label>${es?'Monto':'Amount'}</label>
+          <input class="fc" id="rec-amount" type="number" min="0" step="0.01" placeholder="0.00" value="${rec?(rec.amount||''):''}">
+        </div>
+        <div class="fg"><label>${es?'Categoría':'Category'}</label>
+          <select class="fc" id="rec-cat">${catOpts}</select>
+        </div>
+      </div>`;
+  } else {
+    amountFields = `
+      <div class="form-row">
+        <div class="fg"><label>${es?'Egreso':'Expense'}</label>
+          <input class="fc" id="rec-exp" type="number" min="0" step="0.01" placeholder="0.00" value="${rec?(rec.expenses||''):''}">
+        </div>
+        <div class="fg"><label>${es?'Ingreso':'Income'}</label>
+          <input class="fc" id="rec-inc" type="number" min="0" step="0.01" placeholder="0.00" value="${rec?(rec.income||''):''}">
+        </div>
+      </div>`;
+  }
+
+  const freq = rec?.frequency||'monthly';
+
+  document.getElementById('mRecurringBody').innerHTML = `
+    <div class="fg"><label>${es?'Descripción':'Description'}</label>
+      <input class="fc" id="rec-detail" type="text" placeholder="${es?'Ej: Pago Netflix':'E.g. Netflix payment'}" value="${esc(rec?rec.detail:'')}">
+    </div>
+    ${amountFields}
+    <div class="fg"><label>${es?'Frecuencia':'Frequency'}</label>
+      <select class="fc" id="rec-freq" onchange="updateRecurFreqFields()">${freqOpts}</select>
+    </div>
+    <div id="rec-day-row" class="fg" style="display:${freq==='monthly'||freq==='yearly'?'block':'none'}">
+      <label>${es?'Día del mes (1-31)':'Day of month (1-31)'}</label>
+      <input class="fc" id="rec-dom" type="number" min="1" max="31" placeholder="15" value="${rec?(rec.dayOfMonth||''):''}">
+    </div>
+    <div id="rec-dow-row" class="fg" style="display:${freq==='weekly'||freq==='biweekly'?'block':'none'}">
+      <label>${es?'Día de la semana':'Day of week'}</label>
+      <select class="fc" id="rec-dow">${dowOpts}</select>
+    </div>
+    <div id="rec-month-row" class="fg" style="display:${freq==='yearly'?'block':'none'}">
+      <label>${es?'Mes':'Month'}</label>
+      <select class="fc" id="rec-month">${monthOpts}</select>
+    </div>
+    <div class="fg" style="margin-top:4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="rec-business" ${rec&&rec.business?'checked':''} style="width:16px;height:16px">
+        🏢 ${es?'Transacción de negocio':'Business transaction'}
+      </label>
+    </div>`;
+
+  document.getElementById('mRecurringSave').style.display='inline-flex';
+  setTimeout(()=>document.getElementById('rec-detail')?.focus(),150);
+}
+
+function updateRecurFreqFields(){
+  const freq = document.getElementById('rec-freq')?.value||'monthly';
+  document.getElementById('rec-day-row').style.display = (freq==='monthly'||freq==='yearly')?'block':'none';
+  document.getElementById('rec-dow-row').style.display = (freq==='weekly'||freq==='biweekly')?'block':'none';
+  document.getElementById('rec-month-row').style.display = (freq==='yearly')?'block':'none';
+}
+
+function saveRecurring(){
+  const p = state.pages.find(x=>x.id===editingRecurPageId); if(!p) return;
+  const es = state.lang==='es';
+  const detail = document.getElementById('rec-detail')?.value.trim()||'';
+  const freq   = document.getElementById('rec-freq')?.value||'monthly';
+  const dom    = parseInt(document.getElementById('rec-dom')?.value)||null;
+  const dow    = parseInt(document.getElementById('rec-dow')?.value);
+  const month  = parseInt(document.getElementById('rec-month')?.value)||null;
+  const business = document.getElementById('rec-business')?.checked||false;
+
+  if(!detail){ toast(es?'Escribe una descripción.':'Enter a description.','warn'); return; }
+  if((freq==='monthly'||freq==='yearly') && (!dom||dom<1||dom>31)){
+    toast(es?'Ingresa un día válido (1-31).':'Enter a valid day (1-31).','warn'); return;
+  }
+
+  const recObj = { frequency:freq, dayOfMonth:dom, dayOfWeek:isNaN(dow)?0:dow, monthOfYear:month, detail, business, active:true, lastCreatedDate:'' };
+
+  if(p.type==='credit'){
+    recObj.amount   = parseAmt(document.getElementById('rec-amount')?.value)||0;
+    recObj.category = document.getElementById('rec-cat')?.value||'OTROS';
+    recObj.txType   = 'purchase';
+  } else {
+    recObj.expenses = parseAmt(document.getElementById('rec-exp')?.value)||null;
+    recObj.income   = parseAmt(document.getElementById('rec-inc')?.value)||null;
+  }
+
+  if(!p.recurring) p.recurring=[];
+  if(editingRecurId){
+    const r = p.recurring.find(x=>x.id===editingRecurId);
+    if(r){ Object.assign(r, recObj); }
+  } else {
+    recObj.id = uid();
+    p.recurring.push(recObj);
+  }
+
+  save();
+  renderRecurringList(p);
+  document.getElementById('mRecurringSave').style.display='none';
+  toast(es?'✅ Recurrente guardado':'✅ Recurring saved','ok');
+}
+
+function toggleRecurActive(pageId, recId, active){
+  const p = state.pages.find(x=>x.id===pageId);
+  const r = (p?.recurring||[]).find(x=>x.id===recId);
+  if(r){ r.active=active; save(); }
+}
+
+function deleteRecurring(pageId, recId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  p.recurring = (p.recurring||[]).filter(x=>x.id!==recId);
+  save(); renderRecurringList(p);
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 load();                                  // sync: localStorage (instant)
 if(!state.activeTab) state.activeTab='master';
+if(!state.bills) state.bills=[];
+if(!state.lastRecurringCheck) state.lastRecurringCheck='';
 renderAll();
 updateSyncBadge();
 initFileSync();                          // async: restore main auto-save handle
 initBackupSync();                        // async: restore hard-backup handle
+processRecurringTransactions();          // auto-create any recurring tx due today
 
 // ── Periodic writes ──
 // Main file: every 3 min (belt-and-suspenders on top of the per-save trigger)
