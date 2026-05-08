@@ -20,6 +20,7 @@
 
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 :root{
@@ -305,6 +306,21 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 .hnav-btn:hover { background: rgba(0,0,0,.07); opacity:1; }
 .hnav-btn.active { background: rgba(37,99,235,.15); opacity:1; }
 
+/* ── CLOUD AUTH ── */
+.auth-btn { position:relative; }
+.auth-dot { position:absolute; top:2px; right:2px; width:8px; height:8px; border-radius:50%; background:var(--gray-300); border:1.5px solid white; }
+.auth-dot.signed-in { background:var(--success); }
+.auth-dot.signing-in { background:var(--warning); animation:pulse 1s infinite; }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+
+/* auth modal steps */
+.auth-step { display:none; }
+.auth-step.active { display:block; }
+.auth-otp-grid { display:flex; gap:8px; justify-content:center; margin:16px 0; }
+.auth-otp-grid input { width:44px; height:52px; text-align:center; font-size:22px; font-weight:700; border:2px solid var(--gray-200); border-radius:8px; outline:none; transition:border-color .2s; }
+.auth-otp-grid input:focus { border-color:var(--primary); }
+.auth-email-display { font-weight:600; color:var(--primary); word-break:break-all; }
+
 /* ── TAB DRAG ── */
 .tab-drag-handle { cursor: grab; opacity: .4; font-size: 12px; margin-right: 2px; user-select:none; }
 .tab-item.drag-over { border-top: 3px solid var(--primary); }
@@ -409,6 +425,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <button class="hnav-btn" id="hnav-cards" onclick="switchTab('cards')"   title="Tarjetas / Cards">💳</button>
       <button class="hnav-btn" id="hnav-biz"  onclick="switchTab('business')" title="Negocio / Business">🏢</button>
       <button class="hnav-btn" id="hnav-debit" onclick="switchTab('debit-overview')" title="Cuentas / Accounts">🏦</button>
+      <button class="hnav-btn auth-btn" id="authBtn" onclick="openAuthModal()" title="Sincronizar en la nube / Cloud sync">☁️<span class="auth-dot" id="authDot"></span></button>
     </div>
     <div class="header-spacer"></div>
     <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
@@ -422,6 +439,80 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </header>
   <div class="tab-bar" id="tabBar"></div>
   <main class="main-content" id="mainContent"></main>
+</div>
+
+<!-- MODAL: Cloud Auth -->
+<div class="overlay" id="mAuth" style="display:none" onclick="if(event.target===this)closeModal('mAuth')">
+<div class="modal" style="max-width:380px">
+  <div class="modal-header">
+    <span id="authModalTitle">☁️ Sincronización en la nube</span>
+    <button class="modal-close" onclick="closeModal('mAuth')">✕</button>
+  </div>
+  <div class="modal-body">
+
+    <!-- SIGNED OUT: Step 1 — enter email -->
+    <div class="auth-step active" id="authStep1">
+      <p style="color:var(--gray-500);font-size:13px;margin-bottom:16px;line-height:1.6">
+        Ingresa tu correo y te enviaremos un código de 6 dígitos para iniciar sesión.<br>
+        <span style="font-size:11px;opacity:.7">Enter your email and we'll send a 6-digit code to sign in.</span>
+      </p>
+      <div class="form-group">
+        <label class="form-label">Correo / Email</label>
+        <input type="email" id="authEmail" class="form-control" placeholder="gloria@ejemplo.com"
+               autocomplete="email" inputmode="email"
+               onkeydown="if(event.key==='Enter')sbSendCode()">
+      </div>
+      <div style="display:flex;gap:8px;margin-top:4px">
+        <button class="btn btn-primary" style="flex:1" onclick="sbSendCode()" id="authSendBtn">
+          📨 Enviar código
+        </button>
+      </div>
+    </div>
+
+    <!-- SIGNED OUT: Step 2 — enter OTP -->
+    <div class="auth-step" id="authStep2">
+      <p style="color:var(--gray-500);font-size:13px;margin-bottom:4px;line-height:1.6">
+        Código enviado a <span class="auth-email-display" id="authEmailDisplay"></span>.
+        Ingresa los 6 dígitos:
+      </p>
+      <div class="auth-otp-grid" id="otpGrid">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,0)" onkeydown="otpBack(event,this,0)">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,1)" onkeydown="otpBack(event,this,1)">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,2)" onkeydown="otpBack(event,this,2)">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,3)" onkeydown="otpBack(event,this,3)">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,4)" onkeydown="otpBack(event,this,4)">
+        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,5)" onkeydown="otpBack(event,this,5)">
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="showAuthStep(1)" style="flex:0">← Atrás</button>
+        <button class="btn btn-primary" style="flex:1" onclick="sbVerifyCode()" id="authVerifyBtn">
+          ✅ Verificar
+        </button>
+      </div>
+      <div style="margin-top:10px;text-align:center">
+        <button class="btn btn-ghost btn-sm" onclick="sbSendCode(true)">🔁 Reenviar código</button>
+      </div>
+    </div>
+
+    <!-- SIGNED IN -->
+    <div class="auth-step" id="authStep3">
+      <div style="text-align:center;padding:8px 0 16px">
+        <div style="font-size:40px;margin-bottom:8px">✅</div>
+        <div style="font-weight:700;font-size:15px;margin-bottom:4px" id="authSignedInMsg">Sincronizado</div>
+        <div style="color:var(--gray-400);font-size:12px" id="authUserEmail"></div>
+        <div style="color:var(--gray-400);font-size:11px;margin-top:4px" id="authLastSync"></div>
+      </div>
+      <div style="display:flex;gap:8px;flex-direction:column">
+        <button class="btn btn-primary" onclick="sbPull(true)">⬇️ Cargar desde la nube</button>
+        <button class="btn btn-ghost" onclick="sbPush(true)">⬆️ Guardar en la nube ahora</button>
+        <button class="btn btn-ghost btn-danger" onclick="sbSignOut()" style="margin-top:4px">🚪 Cerrar sesión</button>
+      </div>
+    </div>
+
+    <!-- ERROR / STATUS -->
+    <div id="authStatus" style="margin-top:12px;font-size:12px;text-align:center;color:var(--danger);display:none"></div>
+  </div>
+</div>
 </div>
 
 <!-- MODAL: Camera Capture -->
@@ -840,6 +931,15 @@ const T = {
 // STATE
 // ═══════════════════════════════════════════════
 const STORAGE_KEY = 'contafacil_v2';
+// ── SUPABASE CONFIG ──
+const SB_URL = 'https://womxwuwiepxoupxbhhkg.supabase.co';
+const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndvbXh3dXdpZXB4b3VweGJoaGtnIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzgyMDUyOTIsImV4cCI6MjA5Mzc4MTI5Mn0.og-Nb2pZWqYVpJMNq-8UmOkofZlGu1MmyE6MavTGmZE';
+let sb        = null;   // supabase client instance
+let sbUser    = null;   // current auth user
+let sbPushTimer = null; // debounce handle for cloud push
+let sbLastSync  = null; // Date of last successful push/pull
+let _sbEmail    = '';   // email being verified (OTP flow)
+
 let state = {
   lang: 'es',
   pages: [],        // [{id, name, type:'credit'|'debit', startBalance:0, transactions:[]}]
@@ -860,6 +960,11 @@ function save(){
   try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
   triggerFileSync(); // write to OneDrive file if connected (no-op if not)
   updateSyncBadge();
+  // Cloud push: debounced 6 s so rapid edits don't flood Supabase
+  if(sb && sbUser){
+    clearTimeout(sbPushTimer);
+    sbPushTimer = setTimeout(()=>sbPush(false), 6000);
+  }
 }
 function load(){
   try{
@@ -4654,6 +4759,205 @@ function deleteRecurring(pageId, recId){
 }
 
 // ═══════════════════════════════════════════════
+// SUPABASE CLOUD SYNC
+// ═══════════════════════════════════════════════
+
+function sbInit(){
+  if(typeof supabase === 'undefined'){ console.warn('Supabase SDK not loaded'); return; }
+  sb = supabase.createClient(SB_URL, SB_KEY);
+  // Watch auth state changes (handles magic-link callbacks, sign-out, etc.)
+  sb.auth.onAuthStateChange(async (event, session) => {
+    sbUser = session?.user || null;
+    updateAuthBadge();
+    if(sbUser && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')){
+      await sbPull(false);
+    }
+  });
+  // Restore session from storage (returns instantly if already signed in)
+  sb.auth.getSession().then(({data:{session}}) => {
+    sbUser = session?.user || null;
+    updateAuthBadge();
+    if(sbUser) sbPull(false);
+  });
+}
+
+function updateAuthBadge(){
+  const dot = document.getElementById('authDot');
+  if(!dot) return;
+  dot.className = 'auth-dot' + (sbUser ? ' signed-in' : '');
+}
+
+function openAuthModal(){
+  const el = document.getElementById('mAuth');
+  if(!el) return;
+  el.style.display = 'flex';
+  // Set modal title language
+  const es = state.lang === 'es';
+  document.getElementById('authModalTitle').textContent = es ? '☁️ Sincronización en la nube' : '☁️ Cloud Sync';
+  if(sbUser){
+    showAuthStep(3);
+    document.getElementById('authUserEmail').textContent = sbUser.email || '';
+    document.getElementById('authSignedInMsg').textContent = es ? '✅ Sesión activa' : '✅ Signed in';
+    if(sbLastSync){
+      const d = sbLastSync;
+      document.getElementById('authLastSync').textContent =
+        (es ? 'Último sync: ' : 'Last sync: ') +
+        d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});
+    } else {
+      document.getElementById('authLastSync').textContent = '';
+    }
+  } else {
+    showAuthStep(1);
+    setTimeout(()=>{ const e=document.getElementById('authEmail'); if(e) e.focus(); }, 150);
+  }
+  clearAuthStatus();
+}
+
+function showAuthStep(n){
+  [1,2,3].forEach(i=>{
+    const el = document.getElementById('authStep'+i);
+    if(el) el.className = 'auth-step' + (i===n ? ' active' : '');
+  });
+}
+
+function setAuthStatus(msg, isError=true){
+  const el = document.getElementById('authStatus');
+  if(!el) return;
+  el.style.display = msg ? 'block' : 'none';
+  el.style.color = isError ? 'var(--danger)' : 'var(--success)';
+  el.textContent = msg;
+}
+function clearAuthStatus(){ setAuthStatus(''); }
+
+async function sbSendCode(resend=false){
+  const emailEl = document.getElementById('authEmail');
+  const email = resend ? _sbEmail : (emailEl ? emailEl.value.trim() : '');
+  if(!email || !email.includes('@')){ setAuthStatus('Por favor ingresa un correo válido.'); return; }
+  _sbEmail = email;
+  const btn = document.getElementById('authSendBtn');
+  if(btn){ btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
+  try{
+    const {error} = await sb.auth.signInWithOtp({
+      email,
+      options: { shouldCreateUser: true }
+    });
+    if(error) throw error;
+    document.getElementById('authEmailDisplay').textContent = email;
+    showAuthStep(2);
+    clearAuthStatus();
+    // Focus first OTP box
+    setTimeout(()=>{ const g=document.getElementById('otpGrid'); if(g) g.querySelector('input').focus(); }, 150);
+    if(resend) setAuthStatus('✅ Código reenviado.', false);
+  } catch(e){
+    setAuthStatus('Error: ' + (e.message || 'No se pudo enviar el código.'));
+  } finally {
+    if(btn){ btn.disabled = false; btn.textContent = '📨 Enviar código'; }
+  }
+}
+
+async function sbVerifyCode(){
+  const inputs = document.querySelectorAll('#otpGrid input');
+  const token  = Array.from(inputs).map(i=>i.value).join('').trim();
+  if(token.length !== 6){ setAuthStatus('Ingresa los 6 dígitos del código.'); return; }
+  const btn = document.getElementById('authVerifyBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ Verificando...'; }
+  try{
+    const {data, error} = await sb.auth.verifyOtp({ email: _sbEmail, token, type: 'email' });
+    if(error) throw error;
+    sbUser = data.user;
+    updateAuthBadge();
+    clearAuthStatus();
+    // Pull from cloud; if no cloud data, push local state up
+    await sbPullOrPushNew();
+    openAuthModal(); // re-render to step 3
+  } catch(e){
+    setAuthStatus('Código incorrecto o expirado. Intenta de nuevo.');
+  } finally {
+    if(btn){ btn.disabled=false; btn.textContent='✅ Verificar'; }
+  }
+}
+
+// On first login: if cloud has data → pull it; otherwise push local data up
+async function sbPullOrPushNew(){
+  try{
+    const {data} = await sb.from('user_data').select('state_json').eq('user_id', sbUser.id).maybeSingle();
+    if(data?.state_json && Object.keys(data.state_json).length > 0){
+      Object.assign(state, data.state_json);
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+      renderAll();
+      updateSyncBadge();
+      sbLastSync = new Date();
+      toast('☁️ ' + (state.lang==='es' ? 'Datos cargados desde la nube' : 'Data loaded from cloud'), 'ok', 3500);
+    } else {
+      // No cloud data — push local state up so it's saved
+      await sbPush(false);
+      toast('☁️ ' + (state.lang==='es' ? 'Datos guardados en la nube' : 'Data saved to cloud'), 'ok', 3500);
+    }
+  } catch(e){ /* silent */ }
+}
+
+async function sbPush(showToast=false){
+  if(!sb || !sbUser) return;
+  try{
+    const {error} = await sb.from('user_data').upsert(
+      { user_id: sbUser.id, state_json: state },
+      { onConflict: 'user_id' }
+    );
+    if(error) throw error;
+    sbLastSync = new Date();
+    if(showToast) toast('☁️ ' + (state.lang==='es' ? 'Guardado en la nube' : 'Saved to cloud'), 'ok', 2500);
+  } catch(e){
+    if(showToast) toast('⚠️ ' + (state.lang==='es' ? 'Error al guardar en la nube' : 'Cloud save failed'), 'error', 3000);
+  }
+}
+
+async function sbPull(showToast=false){
+  if(!sb || !sbUser) return;
+  try{
+    const {data, error} = await sb.from('user_data').select('state_json,updated_at').eq('user_id', sbUser.id).maybeSingle();
+    if(error) throw error;
+    if(data?.state_json){
+      Object.assign(state, data.state_json);
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
+      renderAll();
+      updateSyncBadge();
+      sbLastSync = new Date();
+      if(showToast) toast('☁️ ' + (state.lang==='es' ? 'Datos cargados desde la nube' : 'Data loaded from cloud'), 'ok', 3000);
+    }
+  } catch(e){
+    if(showToast) toast('⚠️ ' + (state.lang==='es' ? 'Error al cargar desde la nube' : 'Cloud load failed'), 'error', 3000);
+  }
+}
+
+async function sbSignOut(){
+  if(!sb) return;
+  await sb.auth.signOut();
+  sbUser = null;
+  sbLastSync = null;
+  updateAuthBadge();
+  closeModal('mAuth');
+  toast('👋 ' + (state.lang==='es' ? 'Sesión cerrada' : 'Signed out'), 'ok', 2000);
+}
+
+// OTP input helpers — auto-advance and backspace
+function otpNext(el, idx){
+  el.value = el.value.replace(/\D/g,'').slice(-1);
+  if(el.value && idx < 5){
+    const inputs = document.querySelectorAll('#otpGrid input');
+    inputs[idx+1].focus();
+  }
+  // Auto-verify when all 6 filled
+  const inputs = document.querySelectorAll('#otpGrid input');
+  if(Array.from(inputs).every(i=>i.value)) sbVerifyCode();
+}
+function otpBack(e, el, idx){
+  if(e.key === 'Backspace' && !el.value && idx > 0){
+    const inputs = document.querySelectorAll('#otpGrid input');
+    inputs[idx-1].focus();
+  }
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 load();                                  // sync: localStorage (instant)
@@ -4665,6 +4969,7 @@ updateSyncBadge();
 initFileSync();                          // async: restore main auto-save handle
 initBackupSync();                        // async: restore hard-backup handle
 processRecurringTransactions();          // auto-create any recurring tx due today
+sbInit();                                // async: restore Supabase session + cloud sync
 
 // ── Periodic writes ──
 // Main file: every 3 min (belt-and-suspenders on top of the per-save trigger)
