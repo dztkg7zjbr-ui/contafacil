@@ -408,6 +408,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <button class="hnav-btn" id="hnav-cal"  onclick="switchTab('calendar')"  title="Pagos / Calendar">📅</button>
       <button class="hnav-btn" id="hnav-cards" onclick="switchTab('cards')"   title="Tarjetas / Cards">💳</button>
       <button class="hnav-btn" id="hnav-biz"  onclick="switchTab('business')" title="Negocio / Business">🏢</button>
+      <button class="hnav-btn" id="hnav-debit" onclick="switchTab('debit-overview')" title="Cuentas / Accounts">🏦</button>
     </div>
     <div class="header-spacer"></div>
     <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
@@ -1411,11 +1412,11 @@ function renderAll(){ renderTabs(); renderContent(); updateLangUI(); }
 function renderTabs(){
   const bar = document.getElementById('tabBar');
   // Update header nav active states
-  ['cal','cards','biz'].forEach(k=>{
+  ['cal','cards','biz','debit'].forEach(k=>{
     const el = document.getElementById('hnav-'+k);
     if(el) el.classList.remove('active');
   });
-  const specialMap = {calendar:'cal', cards:'cards', business:'biz'};
+  const specialMap = {calendar:'cal', cards:'cards', business:'biz', 'debit-overview':'debit'};
   if(specialMap[state.activeTab]){
     const el = document.getElementById('hnav-'+specialMap[state.activeTab]);
     if(el) el.classList.add('active');
@@ -1450,6 +1451,7 @@ function renderContent(){
   if(state.activeTab==='calendar'){ main.innerHTML = renderCalendar(); return; }
   if(state.activeTab==='cards')   { main.innerHTML = renderCards();    return; }
   if(state.activeTab==='business'){ main.innerHTML = renderBusiness(); return; }
+  if(state.activeTab==='debit-overview'){ main.innerHTML = renderDebitOverview(); return; }
   if(state.pages.length===0){ main.innerHTML = renderEmpty(); return; }
   if(state.activeTab==='master'){ main.innerHTML = renderMaster(); return; }
   const page = activePage();
@@ -1721,99 +1723,188 @@ function renderDebit(page){
 // ── MASTER VIEW ──
 function renderMaster(){
   if(state.pages.length===0) return renderEmpty();
+  const es = state.lang==='es';
 
   const creditPages = state.pages.filter(p=>p.type==='credit');
   const debitPages  = state.pages.filter(p=>p.type==='debit');
 
-  // Credit totals by category across all credit pages
+  // ── Net worth numbers ──
+  let totalCash = 0;
+  for(const p of debitPages){
+    let b = p.startBalance||0;
+    for(const tx of p.transactions){ b += (tx.income||0) - (tx.expenses||0); }
+    totalCash += b;
+  }
+  let totalDebt = 0;
+  for(const p of creditPages){ totalDebt += computeCreditBalance(p); }
+  const netWorth = totalCash - totalDebt;
+  const netColor = netWorth >= 0 ? '#16a34a' : '#dc2626';
+
+  // ── This month's bills ──
+  const now      = new Date();
+  const calKey   = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  const bills    = state.bills||[];
+  const allBills = [
+    ...bills.map(b=>({name:b.name, paid:!!(b.paidMonths&&b.paidMonths[calKey]), autopay:b.autopay, dueDay:b.dueDay, amount:b.amount})),
+    ...creditPages.filter(p=>p.paymentDueDay).map(p=>({name:p.name, paid:!!(p.paidMonths&&p.paidMonths[calKey]), autopay:p.autopay, dueDay:p.paymentDueDay, amount:null}))
+  ];
+  const billsPaid   = allBills.filter(b=>b.paid).length;
+  const billsTotal  = allBills.length;
+  const billsDue    = allBills.filter(b=>!b.paid && b.dueDay >= now.getDate());
+
+  // ── This month's spending (credit) ──
   const catTotals = {};
   CREDIT_CATS.forEach(c=>{ catTotals[c.id]=0; });
-  let grandTotal = 0;
+  let grandSpend = 0;
   for(const p of creditPages){
     for(const tx of p.transactions){
-      if(tx.category && catTotals[tx.category]!==undefined){ catTotals[tx.category]+=(tx.amount||0); grandTotal+=(tx.amount||0); }
+      if(tx.txType==='payment') continue;
+      // Only count transactions this month
+      const parts = (tx.date||'').split('/');
+      if(parts.length===3){
+        const txMonth = parseInt(parts[0]);
+        const txYear  = parseInt(parts[2].length===2 ? '20'+parts[2] : parts[2]);
+        if(txMonth !== now.getMonth()+1 || txYear !== now.getFullYear()) continue;
+      }
+      if(tx.category && catTotals[tx.category]!==undefined){ catTotals[tx.category]+=(tx.amount||0); grandSpend+=(tx.amount||0); }
     }
   }
 
-  // Debit totals
-  let totalInc=0, totalExp=0;
+  // ── This month's debit income/expenses ──
+  let monthInc=0, monthExp=0;
   for(const p of debitPages){
-    for(const tx of p.transactions){ totalInc+=(tx.income||0); totalExp+=(tx.expenses||0); }
+    for(const tx of p.transactions){
+      const parts = (tx.date||'').split('/');
+      if(parts.length===3){
+        const txMonth = parseInt(parts[0]);
+        const txYear  = parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+        if(txMonth !== now.getMonth()+1 || txYear !== now.getFullYear()) continue;
+      }
+      monthInc += tx.income||0;
+      monthExp += tx.expenses||0;
+    }
   }
 
-  let creditSummary = '';
-  if(creditPages.length){
-    const activeCats = CREDIT_CATS.filter(c=>catTotals[c.id]>0);
-    creditSummary = `<div class="master-section-title">💳 ${t('creditSummary')}</div>
-    <div class="sum-grid">
-      ${activeCats.map(c=>`<div class="sum-card" style="border-left-color:${c.color}">
-        <div class="sum-label">${c.icon} ${state.lang==='es'?c.es:c.en}</div>
-        <div class="sum-value">${fmt(catTotals[c.id])}</div>
-      </div>`).join('')}
-      <div class="sum-card" style="border-left-color:var(--gray-800)">
-        <div class="sum-label">📊 ${t('totalSpending')}</div>
-        <div class="sum-value">${fmt(grandTotal)}</div>
+  const monthNames = es
+    ? ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+
+  // ── Net worth hero card ──
+  const heroCard = `
+    <div class="card" style="margin-bottom:14px;padding:18px 20px;background:linear-gradient(135deg,#1e3a8a,#2563eb);color:white">
+      <div style="font-size:12px;opacity:.8;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">
+        ${es?'Balance neto — ':'Net worth — '}${monthNames[now.getMonth()]} ${now.getFullYear()}
+      </div>
+      <div style="font-size:32px;font-weight:900;letter-spacing:-1px">${fmt(netWorth)}</div>
+      <div style="display:flex;gap:20px;margin-top:10px;flex-wrap:wrap">
+        <div>
+          <div style="font-size:11px;opacity:.7">${es?'Efectivo disponible':'Available cash'}</div>
+          <div style="font-size:16px;font-weight:700">+${fmt(totalCash)}</div>
+        </div>
+        <div>
+          <div style="font-size:11px;opacity:.7">${es?'Deuda en tarjetas':'Card debt'}</div>
+          <div style="font-size:16px;font-weight:700">-${fmt(totalDebt)}</div>
+        </div>
       </div>
     </div>`;
-  }
 
-  let debitSummary = '';
-  if(debitPages.length){
-    debitSummary = `<div class="master-section-title">🏦 ${t('debitSummary')}</div>
-    <div class="sum-grid">
-      <div class="sum-card" style="border-left-color:var(--success)">
-        <div class="sum-label">📥 ${t('totalIncome')}</div>
-        <div class="sum-value amt-positive">${fmt(totalInc)}</div>
+  // ── Monthly snapshot row ──
+  const snapshotRow = `
+    <div class="sum-grid" style="margin-bottom:14px">
+      <div class="sum-card" style="border-left-color:#16a34a">
+        <div class="sum-label">📥 ${es?'Ingresos del mes':'Monthly income'}</div>
+        <div class="sum-value amt-positive">${fmt(monthInc)}</div>
       </div>
-      <div class="sum-card" style="border-left-color:var(--danger)">
-        <div class="sum-label">📤 ${t('totalExpenses')}</div>
-        <div class="sum-value amt-negative">${fmt(totalExp)}</div>
+      <div class="sum-card" style="border-left-color:#dc2626">
+        <div class="sum-label">💳 ${es?'Gastos del mes':'Monthly spending'}</div>
+        <div class="sum-value amt-negative">${fmt(grandSpend + monthExp)}</div>
+      </div>
+      <div class="sum-card" style="border-left-color:#2563eb">
+        <div class="sum-label">📋 ${es?'Pagos este mes':'Bills this month'}</div>
+        <div class="sum-value" style="font-size:18px">${billsPaid} / ${billsTotal} <span style="font-size:12px;color:var(--gray-400)">${es?'pagados':'paid'}</span></div>
       </div>
     </div>`;
+
+  // ── Bills due soon ──
+  let billsDueHTML = '';
+  if(billsDue.length){
+    const sorted = billsDue.slice().sort((a,b)=>a.dueDay-b.dueDay);
+    billsDueHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:#b45309;text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;border-bottom:2px solid #fef3c7">
+          ⚠️ ${es?'Pagos pendientes este mes':'Pending bills this month'}
+        </div>
+        ${sorted.slice(0,5).map(b=>`
+          <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--gray-100)">
+            <div>
+              <span style="font-weight:600;font-size:13px">${esc(b.name)}</span>
+              <span style="font-size:11px;color:var(--gray-400);margin-left:6px">${es?`día ${b.dueDay}`:`day ${b.dueDay}`}</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px">
+              ${b.amount?`<span style="font-weight:600;font-size:13px">${fmt(b.amount)}</span>`:''}
+              ${b.autopay
+                ?`<span style="font-size:10px;background:#dcfce7;color:#15803d;padding:2px 6px;border-radius:4px;font-weight:600">AUTO</span>`
+                :`<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:2px 6px;border-radius:4px;font-weight:600">MANUAL</span>`}
+            </div>
+          </div>`).join('')}
+        ${billsDue.length>5?`<div style="padding:8px 14px;font-size:12px;color:var(--gray-400);text-align:center">+${billsDue.length-5} ${es?'más':'more'} — <button class="btn btn-xs btn-ghost" onclick="switchTab('calendar')">${es?'ver calendario':'see calendar'}</button></div>`:''}
+      </div>`;
   }
 
-  // Credit transactions only (sorted newest first)
-  let allTxRows = '';
-  const allTxs = [];
-  for(const p of creditPages){
-    for(const tx of p.transactions){ allTxs.push({...tx, _page:p}); }
+  // ── Spending by category (this month) ──
+  const activeCats = CREDIT_CATS.filter(c=>catTotals[c.id]>0).sort((a,b)=>catTotals[b.id]-catTotals[a.id]);
+  let spendHTML = '';
+  if(activeCats.length){
+    spendHTML = `
+      <div class="card" style="margin-bottom:14px">
+        <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;border-bottom:1px solid var(--gray-100)">
+          💳 ${es?'Gastos por categoría (este mes)':'Spending by category (this month)'}
+        </div>
+        ${activeCats.map(c=>{
+          const pct = grandSpend > 0 ? Math.round(catTotals[c.id]/grandSpend*100) : 0;
+          return `<div style="padding:8px 14px;border-bottom:1px solid var(--gray-100)">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:3px">
+              <span style="font-size:13px">${c.icon} ${es?c.es:c.en}</span>
+              <span style="font-weight:700;font-size:13px">${fmt(catTotals[c.id])}</span>
+            </div>
+            <div style="height:4px;background:var(--gray-100);border-radius:2px">
+              <div style="height:4px;background:${c.color};border-radius:2px;width:${pct}%"></div>
+            </div>
+          </div>`;
+        }).join('')}
+        <div style="padding:8px 14px;display:flex;justify-content:space-between;font-weight:700;font-size:13px">
+          <span>${es?'Total gastos tarjetas':'Total card spending'}</span><span>${fmt(grandSpend)}</span>
+        </div>
+      </div>`;
   }
-  allTxs.sort((a,b)=>b.id.localeCompare(a.id));
 
-  for(const tx of allTxs){
-    const p = tx._page;
-    const acctTag = `<span class="acct-tag">💳 ${esc(p.name)}</span>`;
-    const hi = tx.highlighted?'row-hi':'';
-    allTxRows += `<tr class="${hi}">
-      <td>${esc(tx.date)}</td>
-      <td>${esc(tx.detail)}</td>
-      <td>${acctTag}</td>
-      <td>${catLabel(tx.category)}</td>
-      <td class="amt">${fmt(tx.amount)}</td>
-    </tr>`;
-  }
+  // ── Account quick links ──
+  const accountLinks = state.pages.length ? `
+    <div class="card" style="margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 14px;border-bottom:1px solid var(--gray-100)">
+        ${es?'Cuentas':'Accounts'}
+      </div>
+      ${state.pages.map(p=>{
+        const isCr = p.type==='credit';
+        const bal  = isCr ? computeCreditBalance(p) : (()=>{
+          let b = p.startBalance||0;
+          for(const tx of p.transactions){ b += (tx.income||0) - (tx.expenses||0); }
+          return b;
+        })();
+        const balColor = isCr ? (bal>0?'#dc2626':'#16a34a') : (bal>=0?'#16a34a':'#dc2626');
+        return `<div style="display:flex;align-items:center;justify-content:space-between;padding:9px 14px;border-bottom:1px solid var(--gray-100);cursor:pointer" onclick="switchTab('${p.id}')">
+          <span style="font-size:13px">${isCr?'💳':'🏦'} ${esc(p.name)}</span>
+          <span style="font-weight:700;font-size:13px;color:${balColor}">${isCr?'-':''}${fmt(Math.abs(bal))}</span>
+        </div>`;
+      }).join('')}
+    </div>` : '';
 
-  if(!allTxRows) allTxRows = `<tr><td colspan="5" class="no-data">${t('noTx')}</td></tr>`;
-
-  const creditTxTitle = state.lang==='es' ? '💳 Transacciones de Crédito' : '💳 Credit Transactions';
-
-  return `<div class="master-section-title">🏠 ${t('allAccounts')}</div>
-  ${creditSummary}${debitSummary}
-  <div class="master-section-title">${creditTxTitle}</div>
-  <div class="card">
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th style="min-width:90px">${t('date')}</th>
-          <th style="min-width:180px">${t('detail')}</th>
-          <th style="min-width:160px">Cuenta</th>
-          <th style="min-width:120px">${t('category')}</th>
-          <th style="min-width:90px;text-align:right">${t('amount')}</th>
-        </tr></thead>
-        <tbody>${allTxRows}</tbody>
-      </table>
-    </div>
+  // ── Print button ──
+  const printBtn = `<div style="text-align:right;margin-bottom:8px">
+    <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir resumen':'Print summary'}</button>
   </div>`;
+
+  return printBtn + heroCard + snapshotRow + billsDueHTML + spendHTML + accountLinks;
 }
 
 function attachInlineListeners(page){
@@ -1861,7 +1952,7 @@ function tabDrop(e, targetPageId){
 
 function switchTab(id){
   // Special tabs don't require a matching page
-  const SPECIAL = ['master','calendar','cards','business'];
+  const SPECIAL = ['master','calendar','cards','business','debit-overview'];
   if(SPECIAL.includes(id) || state.pages.find(p=>p.id===id)){
     state.activeTab = id;
   } else {
@@ -2875,6 +2966,206 @@ function syncImportPasted(){
   }
 }
 
+// ── Print / PDF Monthly Summary ──
+function printMonthlySummary(){
+  const es = state.lang==='es';
+  const now = new Date();
+  const monthNames = es
+    ? ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre']
+    : ['January','February','March','April','May','June','July','August','September','October','November','December'];
+  const monthLabel = `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+  const calKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+
+  const creditPages = state.pages.filter(p=>p.type==='credit');
+  const debitPages  = state.pages.filter(p=>p.type==='debit');
+
+  // Net worth
+  let totalCash=0, totalDebt=0;
+  for(const p of debitPages){
+    let b=p.startBalance||0;
+    for(const tx of p.transactions){ b+=(tx.income||0)-(tx.expenses||0); }
+    totalCash+=b;
+  }
+  for(const p of creditPages){ totalDebt+=computeCreditBalance(p); }
+  const netWorth=totalCash-totalDebt;
+
+  // This month spending
+  const catTotals={};
+  CREDIT_CATS.forEach(c=>{catTotals[c.id]=0;});
+  let grandSpend=0, monthInc=0, monthExp=0;
+  for(const p of creditPages){
+    for(const tx of p.transactions){
+      if(tx.txType==='payment') continue;
+      const parts=(tx.date||'').split('/');
+      if(parts.length===3){
+        const txM=parseInt(parts[0]), txY=parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+        if(txM!==now.getMonth()+1||txY!==now.getFullYear()) continue;
+      }
+      if(tx.category&&catTotals[tx.category]!==undefined){catTotals[tx.category]+=(tx.amount||0);grandSpend+=(tx.amount||0);}
+    }
+  }
+  for(const p of debitPages){
+    for(const tx of p.transactions){
+      const parts=(tx.date||'').split('/');
+      if(parts.length===3){
+        const txM=parseInt(parts[0]), txY=parseInt(parts[2].length===2?'20'+parts[2]:parts[2]);
+        if(txM!==now.getMonth()+1||txY!==now.getFullYear()) continue;
+      }
+      monthInc+=tx.income||0; monthExp+=tx.expenses||0;
+    }
+  }
+
+  // Bills
+  const allBills=[
+    ...(state.bills||[]).map(b=>({name:b.name,paid:!!(b.paidMonths&&b.paidMonths[calKey]),autopay:b.autopay,dueDay:b.dueDay,amount:b.amount,label:b.label||''})),
+    ...creditPages.filter(p=>p.paymentDueDay).map(p=>({name:p.name+' ('+(es?'Tarjeta':'Card')+')',paid:!!(p.paidMonths&&p.paidMonths[calKey]),autopay:p.autopay,dueDay:p.paymentDueDay,amount:null,label:''}))
+  ].sort((a,b)=>a.dueDay-b.dueDay);
+
+  const activeCats=CREDIT_CATS.filter(c=>catTotals[c.id]>0).sort((a,b)=>catTotals[b.id]-catTotals[a.id]);
+
+  const fmtP = n => n==null?'—':'$'+parseFloat(n).toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g,',');
+
+  const html = `<!DOCTYPE html>
+<html lang="${es?'es':'en'}">
+<head>
+<meta charset="UTF-8">
+<title>ContaFácil — ${monthLabel}</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: Arial, sans-serif; font-size: 12px; color: #111; padding: 20px; }
+  h1 { font-size: 20px; color: #1e40af; margin-bottom: 4px; }
+  h2 { font-size: 13px; font-weight: 700; color: #374151; border-bottom: 2px solid #2563eb; padding-bottom: 4px; margin: 18px 0 8px; text-transform: uppercase; letter-spacing: .4px; }
+  .hero { background: #1e3a8a; color: white; border-radius: 8px; padding: 14px 18px; margin-bottom: 16px; display:flex; gap:40px; }
+  .hero-main { }
+  .hero-label { font-size: 10px; opacity: .7; text-transform: uppercase; letter-spacing: .4px; }
+  .hero-val { font-size: 24px; font-weight: 900; }
+  .hero-sub { font-size: 12px; opacity: .85; margin-top: 2px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px; }
+  .stat-box { border: 1px solid #e5e7eb; border-radius: 6px; padding: 10px 12px; }
+  .stat-label { font-size: 10px; color: #6b7280; text-transform: uppercase; letter-spacing: .3px; margin-bottom: 4px; }
+  .stat-val { font-size: 18px; font-weight: 800; }
+  .green { color: #16a34a; } .red { color: #dc2626; } .blue { color: #2563eb; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 16px; }
+  th { background: #f3f4f6; text-align: left; padding: 6px 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .3px; color: #6b7280; }
+  td { padding: 6px 8px; border-bottom: 1px solid #f3f4f6; font-size: 12px; }
+  .amt { text-align: right; font-weight: 600; }
+  .paid { color: #16a34a; font-weight: 700; }
+  .unpaid { color: #dc2626; }
+  .bar-wrap { background: #f3f4f6; border-radius: 3px; height: 5px; margin-top: 3px; }
+  .bar-fill { height: 5px; border-radius: 3px; }
+  .footer { margin-top: 20px; font-size: 10px; color: #9ca3af; text-align: center; border-top: 1px solid #e5e7eb; padding-top: 10px; }
+  @media print {
+    body { padding: 10px; }
+    button { display: none !important; }
+    @page { margin: 1cm; }
+  }
+</style>
+</head>
+<body>
+<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:14px">
+  <div>
+    <h1>💰 ContaFácil</h1>
+    <div style="font-size:13px;color:#6b7280">${es?'Resumen Mensual —':'Monthly Summary —'} ${monthLabel}</div>
+  </div>
+  <button onclick="window.print()" style="padding:8px 16px;background:#2563eb;color:white;border:none;border-radius:6px;cursor:pointer;font-size:13px">🖨️ ${es?'Imprimir':'Print'}</button>
+</div>
+
+<div class="hero">
+  <div class="hero-main">
+    <div class="hero-label">${es?'Balance neto':'Net worth'}</div>
+    <div class="hero-val">${fmtP(netWorth)}</div>
+  </div>
+  <div>
+    <div class="hero-label">${es?'Efectivo':'Cash'}</div>
+    <div class="hero-sub">+${fmtP(totalCash)}</div>
+  </div>
+  <div>
+    <div class="hero-label">${es?'Deuda':'Debt'}</div>
+    <div class="hero-sub">-${fmtP(totalDebt)}</div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="stat-box">
+    <div class="stat-label">${es?'Ingresos del mes':'Monthly income'}</div>
+    <div class="stat-val green">+${fmtP(monthInc)}</div>
+  </div>
+  <div class="stat-box">
+    <div class="stat-label">${es?'Gastos del mes':'Monthly expenses'}</div>
+    <div class="stat-val red">-${fmtP(grandSpend+monthExp)}</div>
+  </div>
+</div>
+
+<h2>${es?'Pagos del mes':'Monthly bills'}</h2>
+<table>
+  <thead><tr>
+    <th>${es?'Pago':'Bill'}</th>
+    <th>${es?'Día':'Day'}</th>
+    <th>${es?'Monto':'Amount'}</th>
+    <th>${es?'Autopago':'Autopay'}</th>
+    <th>${es?'Estado':'Status'}</th>
+  </tr></thead>
+  <tbody>
+    ${allBills.map(b=>`<tr>
+      <td>${b.name}${b.label?` <span style="color:#9ca3af;font-size:10px">${b.label}</span>`:''}</td>
+      <td>${es?`día ${b.dueDay}`:`day ${b.dueDay}`}</td>
+      <td class="amt">${b.amount?fmtP(b.amount):'—'}</td>
+      <td style="text-align:center">${b.autopay?'✓':''}</td>
+      <td class="${b.paid?'paid':'unpaid'}">${b.paid?(es?'✓ Pagado':'✓ Paid'):(es?'Pendiente':'Pending')}</td>
+    </tr>`).join('')}
+  </tbody>
+</table>
+
+${activeCats.length?`
+<h2>${es?'Gastos por categoría':'Spending by category'}</h2>
+<table>
+  <thead><tr>
+    <th>${es?'Categoría':'Category'}</th>
+    <th style="text-align:right">${es?'Monto':'Amount'}</th>
+    <th style="text-align:right">%</th>
+  </tr></thead>
+  <tbody>
+    ${activeCats.map(c=>{
+      const pct=grandSpend>0?Math.round(catTotals[c.id]/grandSpend*100):0;
+      return `<tr><td>${c.icon} ${es?c.es:c.en}</td><td class="amt">${fmtP(catTotals[c.id])}</td><td class="amt">${pct}%</td></tr>`;
+    }).join('')}
+    <tr style="font-weight:700;border-top:2px solid #e5e7eb"><td>${es?'Total':'Total'}</td><td class="amt">${fmtP(grandSpend)}</td><td class="amt">100%</td></tr>
+  </tbody>
+</table>`:''}
+
+<h2>${es?'Cuentas':'Accounts'}</h2>
+<table>
+  <thead><tr>
+    <th>${es?'Cuenta':'Account'}</th>
+    <th>${es?'Tipo':'Type'}</th>
+    <th style="text-align:right">${es?'Saldo':'Balance'}</th>
+  </tr></thead>
+  <tbody>
+    ${state.pages.map(p=>{
+      const isCr=p.type==='credit';
+      let bal=isCr?computeCreditBalance(p):(()=>{let b=p.startBalance||0;for(const tx of p.transactions){b+=(tx.income||0)-(tx.expenses||0);}return b;})();
+      return `<tr>
+        <td>${isCr?'💳':'🏦'} ${p.name}</td>
+        <td>${isCr?(es?'Crédito':'Credit'):(es?'Débito':'Debit')}</td>
+        <td class="amt ${isCr?(bal>0?'red':'green'):(bal>=0?'green':'red')}">${isCr?'-':''}${fmtP(Math.abs(bal))}</td>
+      </tr>`;
+    }).join('')}
+  </tbody>
+</table>
+
+<div class="footer">ContaFácil · ${es?'Generado el':'Generated on'} ${now.toLocaleDateString(es?'es-US':'en-US')} · ${es?'Solo para uso personal':'For personal use only'}</div>
+</body>
+</html>`;
+
+  const win = window.open('','_blank','width=800,height=700');
+  if(win){
+    win.document.write(html);
+    win.document.close();
+  } else {
+    toast(es?'Permite ventanas emergentes para imprimir.':'Allow pop-ups to print.','warn',4000);
+  }
+}
+
 // ── Export JSON — file backup (secondary option, desktop Chrome auto-sync is primary).
 async function exportData(){
   const es   = state.lang==='es';
@@ -3881,28 +4172,119 @@ function renderCards(){
 }
 
 // ═══════════════════════════════════════════════
+// FEATURE: DEBIT OVERVIEW PAGE
+// ═══════════════════════════════════════════════
+function renderDebitOverview(){
+  const es = state.lang==='es';
+  const debitPages = state.pages.filter(p=>p.type==='debit');
+
+  if(!debitPages.length){
+    return `<div class="page-header" style="margin-bottom:12px">
+      <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏦 Mis Cuentas':'🏦 My Accounts'}</div>
+    </div>
+    <div style="text-align:center;padding:60px 20px;color:var(--gray-400)">
+      <div style="font-size:40px">🏦</div>
+      <div style="font-weight:600;margin:12px 0 8px">${es?'No hay cuentas de débito':'No debit accounts yet'}</div>
+      <button class="btn btn-primary" onclick="openCreatePage()">${es?'Crear cuenta':'Create account'}</button>
+    </div>`;
+  }
+
+  // Totals across all debit accounts
+  let totalCash = 0;
+  let totalInc  = 0;
+  let totalExp  = 0;
+
+  const accounts = debitPages.map(p=>{
+    // Compute running balance (startBalance + income - expenses)
+    let bal = p.startBalance||0;
+    let inc = 0, exp = 0;
+    for(const tx of p.transactions){
+      inc += tx.income||0;
+      exp += tx.expenses||0;
+    }
+    bal += inc - exp;
+    totalCash += bal;
+    totalInc  += inc;
+    totalExp  += exp;
+    return {p, bal, inc, exp};
+  });
+
+  const overviewCard = `
+    <div class="card" style="margin-bottom:12px;padding:14px 16px;background:linear-gradient(135deg,#065f46,#059669);color:white">
+      <div style="font-size:12px;opacity:.8;margin-bottom:4px">${es?'Efectivo total disponible':'Total available cash'}</div>
+      <div style="font-size:28px;font-weight:800">${fmt(totalCash)}</div>
+      <div style="display:flex;gap:20px;margin-top:8px;font-size:12px;opacity:.85">
+        <span>📥 ${es?'Ingresos':'Income'}: ${fmt(totalInc)}</span>
+        <span>📤 ${es?'Egresos':'Expenses'}: ${fmt(totalExp)}</span>
+      </div>
+    </div>`;
+
+  const accountCards = accounts.map(({p, bal, inc, exp})=>{
+    const balColor = bal >= 0 ? '#065f46' : '#dc2626';
+    return `
+    <div class="card" style="margin-bottom:10px;padding:14px 16px;cursor:pointer" onclick="switchTab('${p.id}')">
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">
+        <div>
+          <div style="font-weight:700;font-size:15px">🏦 ${esc(p.name)}</div>
+          <div style="font-size:26px;font-weight:800;color:${balColor};margin-top:4px">${fmt(bal)}</div>
+          <div style="font-size:12px;color:var(--gray-500);margin-top:3px">
+            ${es?'Saldo inicial':'Start'}: ${fmt(p.startBalance||0)}
+          </div>
+        </div>
+        <div style="text-align:right;font-size:12px">
+          <div style="color:var(--gray-500)">${es?'Ingresos':'Income'}</div>
+          <div style="font-weight:700;color:#16a34a;font-size:14px">+${fmt(inc)}</div>
+          <div style="color:var(--gray-500);margin-top:6px">${es?'Egresos':'Expenses'}</div>
+          <div style="font-weight:700;color:#dc2626;font-size:14px">-${fmt(exp)}</div>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+
+  return `<div class="page-header" style="margin-bottom:12px">
+    <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏦 Mis Cuentas':'🏦 My Accounts'}</div>
+  </div>
+  ${overviewCard}${accountCards}`;
+}
+
+// ═══════════════════════════════════════════════
 // FEATURE 3: BUSINESS PAGE
 // ═══════════════════════════════════════════════
 function renderBusiness(){
   const es = state.lang==='es';
+
+  // Collect all business transactions
   const allBizTx = [];
   for(const p of state.pages){
     for(const tx of p.transactions){
       if(!tx.business) continue;
-      allBizTx.push({
-        ...tx,
-        accountName: p.name,
-        accountType: p.type,
-        pageId: p.id,
-      });
+      allBizTx.push({...tx, accountName:p.name, accountType:p.type, pageId:p.id});
     }
   }
 
+  // Sort newest first
   allBizTx.sort((a,b)=>{
-    const da = new Date(a.date), db = new Date(b.date);
-    return (isNaN(db)?0:db) - (isNaN(da)?0:da);
+    const parse = d => { const p=(d||'').split('/'); return p.length===3?new Date(`${p[2].length===2?'20'+p[2]:p[2]}-${p[0]}-${p[1]}`):new Date(0); };
+    return parse(b.date) - parse(a.date);
   });
 
+  const headerHTML = `<div class="page-header" style="margin-bottom:12px">
+    <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio / Propiedad':'🏢 Business / Property'}</div>
+    <div class="page-actions">
+      <button class="btn btn-ghost btn-sm" onclick="printMonthlySummary()">🖨️ ${es?'Imprimir':'Print'}</button>
+    </div>
+  </div>`;
+
+  if(!allBizTx.length){
+    return headerHTML + `
+    <div style="text-align:center;padding:50px 20px;color:var(--gray-400)">
+      <div style="font-size:40px">🏢</div>
+      <div style="font-weight:600;margin:12px 0 8px">${es?'Sin transacciones de negocio':'No business transactions yet'}</div>
+      <div style="font-size:13px;max-width:320px;margin:0 auto">${es?'Al agregar una transacción en cualquier cuenta, activa el interruptor "Transacción de negocio" para que aparezca aquí.':'When adding a transaction on any account, toggle "Business transaction" to show it here.'}</div>
+    </div>`;
+  }
+
+  // Totals
   let bizIncome=0, bizExpenses=0;
   for(const tx of allBizTx){
     if(tx.accountType==='debit'){
@@ -3915,65 +4297,94 @@ function renderBusiness(){
   }
   const net = bizIncome - bizExpenses;
 
-  if(!allBizTx.length){
-    return `<div class="page-header" style="margin-bottom:12px">
-      <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio':'🏢 Business'}</div>
-    </div>
-    <div style="text-align:center;padding:60px 20px;color:var(--gray-400)">
-      <div style="font-size:40px">🏢</div>
-      <div style="font-weight:600;margin:12px 0 8px">${es?'Sin transacciones de negocio':'No business transactions yet'}</div>
-      <div style="font-size:13px">${es?'Al agregar una transacción, marca "Transacción de negocio" para que aparezca aquí.':'When adding a transaction, check "Business transaction" to show it here.'}</div>
+  // Totals by account (for breakdown)
+  const byAccount = {};
+  for(const tx of allBizTx){
+    if(!byAccount[tx.accountName]) byAccount[tx.accountName]={income:0,expenses:0,pageId:tx.pageId};
+    if(tx.accountType==='debit'){
+      byAccount[tx.accountName].income   += tx.income   ||0;
+      byAccount[tx.accountName].expenses += tx.expenses ||0;
+    } else {
+      if(tx.txType==='payment') byAccount[tx.accountName].income += tx.amount||0;
+      else byAccount[tx.accountName].expenses += tx.amount||0;
+    }
+  }
+
+  const summaryHTML = `
+    <div class="sum-grid" style="margin-bottom:12px">
+      <div class="sum-card" style="border-left-color:var(--success)">
+        <div class="sum-label">📥 ${es?'Ingresos negocio':'Business income'}</div>
+        <div class="sum-value amt-positive">${fmt(bizIncome)}</div>
+      </div>
+      <div class="sum-card" style="border-left-color:var(--danger)">
+        <div class="sum-label">📤 ${es?'Gastos negocio':'Business expenses'}</div>
+        <div class="sum-value amt-negative">${fmt(bizExpenses)}</div>
+      </div>
+      <div class="sum-card" style="border-left-color:${net>=0?'var(--success)':'var(--danger)'}">
+        <div class="sum-label">💼 ${es?'Balance neto':'Net balance'}</div>
+        <div class="sum-value ${net>=0?'amt-positive':'amt-negative'}">${fmt(net)}</div>
+      </div>
+    </div>`;
+
+  // By-account breakdown
+  const acctBreakdown = Object.entries(byAccount).length > 1 ? `
+    <div class="card" style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;border-bottom:1px solid var(--gray-100)">
+        ${es?'Por cuenta':'By account'}
+      </div>
+      ${Object.entries(byAccount).map(([name,{income,expenses,pageId}])=>`
+        <div style="display:flex;align-items:center;justify-content:space-between;padding:9px 12px;border-bottom:1px solid var(--gray-100);cursor:pointer" onclick="switchTab('${pageId}')">
+          <span style="font-size:13px;font-weight:600">${esc(name)}</span>
+          <div style="display:flex;gap:12px;font-size:12px">
+            ${income?`<span class="amt-positive">+${fmt(income)}</span>`:''}
+            ${expenses?`<span class="amt-negative">-${fmt(expenses)}</span>`:''}
+          </div>
+        </div>`).join('')}
+    </div>` : '';
+
+  // Income rows
+  const incTx = allBizTx.filter(tx=>
+    tx.accountType==='debit' ? (tx.income||0)>0 : tx.txType==='payment'
+  );
+  // Expense rows
+  const expTx = allBizTx.filter(tx=>
+    tx.accountType==='debit' ? (tx.expenses||0)>0 : tx.txType!=='payment'
+  );
+
+  function txTable(txList, title, colorClass){
+    if(!txList.length) return '';
+    const rows = txList.map(tx=>{
+      const amt = tx.accountType==='credit'
+        ? tx.amount||0
+        : (tx.income||tx.expenses||0);
+      return `<tr>
+        <td style="white-space:nowrap;font-size:12px">${esc(tx.date)}</td>
+        <td><span style="background:#dbeafe;color:#1e40af;padding:1px 5px;border-radius:3px;font-size:10px;font-weight:600;white-space:nowrap">${esc(tx.accountName)}</span></td>
+        <td style="min-width:140px;font-size:13px">${esc(tx.detail)}</td>
+        <td class="amt ${colorClass}" style="font-size:13px">${fmt(amt)}</td>
+        <td><button class="btn btn-xs btn-ghost" onclick="switchTab('${tx.pageId}')">→</button></td>
+      </tr>`;
+    }).join('');
+    return `<div class="card" style="margin-bottom:12px">
+      <div style="font-size:12px;font-weight:700;color:var(--gray-600);text-transform:uppercase;letter-spacing:.5px;padding:10px 12px;border-bottom:1px solid var(--gray-100)">${title}</div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr>
+            <th>${es?'Fecha':'Date'}</th>
+            <th>${es?'Cuenta':'Account'}</th>
+            <th>${es?'Descripción':'Description'}</th>
+            <th style="text-align:right">${es?'Monto':'Amount'}</th>
+            <th></th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
     </div>`;
   }
 
-  const summaryHTML = `<div class="sum-grid" style="margin-bottom:12px">
-    <div class="sum-card" style="border-left-color:var(--success)">
-      <div class="sum-label">📥 ${es?'Ingresos':'Income'}</div>
-      <div class="sum-value amt-positive">${fmt(bizIncome)}</div>
-    </div>
-    <div class="sum-card" style="border-left-color:var(--danger)">
-      <div class="sum-label">📤 ${es?'Gastos':'Expenses'}</div>
-      <div class="sum-value amt-negative">${fmt(bizExpenses)}</div>
-    </div>
-    <div class="sum-card" style="border-left-color:${net>=0?'var(--success)':'var(--danger)'}">
-      <div class="sum-label">💼 ${es?'Balance neto':'Net balance'}</div>
-      <div class="sum-value ${net>=0?'amt-positive':'amt-negative'}">${fmt(net)}</div>
-    </div>
-  </div>`;
-
-  const rows = allBizTx.map(tx=>{
-    const isPay = tx.txType==='payment';
-    const amtStr = tx.accountType==='credit'
-      ? (isPay ? `<span class="amt amt-positive">+${fmt(tx.amount)}</span>` : `<span class="amt amt-negative">-${fmt(tx.amount)}</span>`)
-      : `${tx.income?`<span class="amt amt-positive">+${fmt(tx.income)}</span>`:''}${tx.expenses?`<span class="amt amt-negative">-${fmt(tx.expenses)}</span>`:''}`;
-
-    return `<tr>
-      <td style="white-space:nowrap">${esc(tx.date)}</td>
-      <td><span style="background:#dbeafe;color:#1e40af;padding:2px 6px;border-radius:4px;font-size:10px;font-weight:600;white-space:nowrap">${esc(tx.accountName)}</span></td>
-      <td style="min-width:160px">${esc(tx.detail)}</td>
-      <td style="text-align:right">${amtStr}</td>
-      <td><button class="btn btn-xs btn-outline" onclick="switchTab('${tx.pageId}')">→</button></td>
-    </tr>`;
-  }).join('');
-
-  return `<div class="page-header" style="margin-bottom:12px">
-    <div class="page-title-input" style="font-size:18px;font-weight:700">${es?'🏢 Negocio':'🏢 Business'}</div>
-  </div>
-  ${summaryHTML}
-  <div class="card">
-    <div class="table-wrap">
-      <table>
-        <thead><tr>
-          <th style="min-width:85px">${es?'Fecha':'Date'}</th>
-          <th style="min-width:90px">${es?'Cuenta':'Account'}</th>
-          <th>${es?'Descripción':'Description'}</th>
-          <th style="min-width:90px;text-align:right">${es?'Monto':'Amount'}</th>
-          <th style="min-width:40px"></th>
-        </tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-    </div>
-  </div>`;
+  return headerHTML + summaryHTML + acctBreakdown
+    + txTable(incTx,  `📥 ${es?'Ingresos':'Income'}`,  'amt-positive')
+    + txTable(expTx,  `📤 ${es?'Gastos':'Expenses'}`, 'amt-negative');
 }
 
 // ═══════════════════════════════════════════════
