@@ -2020,16 +2020,22 @@ function buildTxForm(page, tx){
     </div>`;
   if(page.type==='credit'){
     const catOpts = CREDIT_CATS.map(c=>`<option value="${c.id}" ${(tx&&tx.category===c.id)?'selected':''}>${state.lang==='es'?c.es:c.en}</option>`).join('');
+    const isPay = !!(tx&&tx.txType==='payment');
+    // Debit accounts for "from account" picker
+    const debitPages = state.pages.filter(p=>p.type==='debit');
+    const acctOpts = debitPages.map(p2=>
+      `<option value="${p2.id}" ${tx&&tx.fromAccountId===p2.id?'selected':''}>${esc(p2.name)}</option>`
+    ).join('');
     body = `
     <div class="fg">
-      <label>${es?'Tipo':'Type'}</label>
+      <label>${es?'Tipo de transacción':'Transaction type'}</label>
       <div style="display:flex;gap:12px;margin-top:2px">
         <label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:500">
-          <input type="radio" name="tx-type-r" value="purchase" ${!tx||tx.txType!=='payment'?'checked':''} style="accent-color:var(--primary)">
+          <input type="radio" name="tx-type-r" value="purchase" ${!isPay?'checked':''} style="accent-color:var(--primary)" onchange="txTypeChanged()">
           ${es?'Compra / Cargo':'Purchase / Charge'}
         </label>
         <label style="cursor:pointer;display:flex;align-items:center;gap:6px;font-weight:500;color:#16a34a">
-          <input type="radio" name="tx-type-r" value="payment" ${tx&&tx.txType==='payment'?'checked':''} style="accent-color:#16a34a">
+          <input type="radio" name="tx-type-r" value="payment" ${isPay?'checked':''} style="accent-color:#16a34a" onchange="txTypeChanged()">
           💚 ${es?'Pago a tarjeta':'Card Payment'}
         </label>
       </div>
@@ -2038,8 +2044,16 @@ function buildTxForm(page, tx){
       <div class="fg"><label>${t('date')}</label><input class="fc" id="tx-date" type="text" placeholder="MM/DD/AAAA" value="${esc(tx?tx.date:todayStr)}"></div>
       <div class="fg"><label>${t('amount')}</label><input class="fc" id="tx-amount" type="number" min="0" step="0.01" placeholder="0.00" value="${tx?(tx.amount||''):''}"></div>
     </div>
-    <div class="fg"><label>${t('detail')}</label><input class="fc" id="tx-detail" type="text" placeholder="${state.lang==='es'?'Ej: Walmart Supercenter':'E.g. Walmart Supercenter'}" value="${esc(tx?tx.detail:'')}"></div>
-    <div class="fg"><label>${t('category')}</label>
+    <div class="fg"><label>${t('detail')}</label><input class="fc" id="tx-detail" type="text" placeholder="${es?(isPay?'Ej: Pago Chase Sapphire':'Ej: Walmart Supercenter'):(isPay?'E.g. Chase Sapphire payment':'E.g. Walmart Supercenter')}" value="${esc(tx?tx.detail:'')}"></div>
+    <div class="fg" id="tx-pay-acct-row" style="display:${isPay&&debitPages.length?'block':'none'}">
+      <label style="color:#16a34a;font-weight:700">💳→🏦 ${es?'Descontar de cuenta':'Deduct from account'}</label>
+      <select class="fc" id="tx-pay-acct">
+        <option value="">${es?'— Solo actualizar tarjeta —':'— Only update card balance —'}</option>
+        ${acctOpts}
+      </select>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:4px">${es?'El egreso se registrará automáticamente en esa cuenta.':'The expense will be auto-logged in that account.'}</div>
+    </div>
+    <div class="fg" id="tx-cat-fg" style="display:${isPay?'none':'block'}"><label>${t('category')}</label>
       <select class="fc" id="tx-cat" onchange="autoCatFromDetail()">
         ${catOpts}
       </select>
@@ -2065,6 +2079,23 @@ function buildTxForm(page, tx){
 
 function autoCatFromDetail(){} // hook for future detail-based categorization
 
+// Show/hide payment-specific fields when the purchase/payment radio changes
+function txTypeChanged(){
+  const isPay = document.querySelector('input[name="tx-type-r"]:checked')?.value === 'payment';
+  const payRow = document.getElementById('tx-pay-acct-row');
+  const catFg  = document.getElementById('tx-cat-fg');
+  const detail = document.getElementById('tx-detail');
+  const debitPages = state.pages.filter(p=>p.type==='debit');
+  if(payRow) payRow.style.display = (isPay && debitPages.length) ? 'block' : 'none';
+  if(catFg)  catFg.style.display  = isPay ? 'none' : 'block';
+  if(detail && !detail.value){
+    const es = state.lang==='es';
+    detail.placeholder = isPay
+      ? (es?'Ej: Pago Chase Sapphire':'E.g. Chase Sapphire payment')
+      : (es?'Ej: Walmart Supercenter':'E.g. Walmart Supercenter');
+  }
+}
+
 function saveTx(){
   const p = state.pages.find(x=>x.id===editingPageId); if(!p) return;
   const date = document.getElementById('tx-date')?.value.trim()||'';
@@ -2079,12 +2110,30 @@ function saveTx(){
     const txTypeEl = document.querySelector('input[name="tx-type-r"]:checked');
     const txType = txTypeEl ? txTypeEl.value : 'purchase';
     const category = txType==='payment' ? 'PAGOS' : (document.getElementById('tx-cat')?.value||'OTROS');
+    const fromAccountId = txType==='payment' ? (document.getElementById('tx-pay-acct')?.value||'') : '';
     if(!amount){ toast(state.lang==='es'?'Ingresa un monto válido.':'Enter a valid amount.','warn'); return; }
     if(editingTxId){
       const tx = p.transactions.find(x=>x.id===editingTxId);
-      if(tx){ Object.assign(tx,{date,detail,amount,category,notes,business:isBusiness,txType}); }
+      if(tx){ Object.assign(tx,{date,detail,amount,category,notes,business:isBusiness,txType,fromAccountId}); }
     } else {
-      p.transactions.push({id:uid(),date,detail,amount,category,notes,highlighted:false,business:isBusiness,txType});
+      p.transactions.push({id:uid(),date,detail,amount,category,notes,highlighted:false,business:isBusiness,txType,fromAccountId});
+    }
+    // If paying from a debit account, auto-create the matching expense there
+    if(txType==='payment' && fromAccountId && !editingTxId){
+      const srcPage = state.pages.find(x=>x.id===fromAccountId);
+      if(srcPage){
+        const es = state.lang==='es';
+        const debitDetail = detail || (es?`Pago — ${p.name}`:`Payment — ${p.name}`);
+        srcPage.transactions.push({
+          id:uid(), date, checkNum:'',
+          detail: debitDetail,
+          expenses: amount, income: null,
+          notes: notes,
+          highlighted: false,
+          business: isBusiness,
+          linkedCardId: p.id   // reference so we know where this came from
+        });
+      }
     }
   } else {
     const expenses = parseAmt(document.getElementById('tx-exp')?.value)||null;
