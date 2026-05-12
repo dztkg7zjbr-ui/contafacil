@@ -5150,7 +5150,11 @@ async function sbSendCode(resend=false){
   try{
     const {error} = await sb.auth.signInWithOtp({
       email,
-      options: { shouldCreateUser: true }
+      options: {
+        shouldCreateUser: true,
+        // Point the magic-link in the email at the real app URL, not localhost
+        emailRedirectTo: 'https://dztkg7zjbr-ui.github.io/contafacil/'
+      }
     });
     if(error) throw error;
     document.getElementById('authEmailDisplay').textContent = email;
