@@ -422,6 +422,25 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 .fab-overlay { position:fixed; inset:0; z-index:199; background:rgba(0,0,0,.2); display:none; }
 .fab-overlay.open { display:block; }
 
+/* ── MODAL ALIAS CLASSES (used by payoff, auth, csv modals) ── */
+.modal-header{padding:20px 24px 14px;border-bottom:1px solid var(--gray-200);display:flex;align-items:center;gap:10px;font-size:17px;font-weight:700}
+.modal-close{background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray-500);margin-left:auto;line-height:1;padding:2px 6px;border-radius:4px}
+.modal-close:hover{background:var(--gray-100);color:var(--gray-800)}
+.form-group{margin-bottom:14px}
+.form-label{display:block;font-size:12px;font-weight:700;color:var(--gray-600);margin-bottom:5px;text-transform:uppercase;letter-spacing:.4px}
+.form-control{width:100%;padding:9px 12px;border:1.5px solid var(--gray-200);border-radius:var(--radius);font-size:14px;font-family:inherit;color:var(--gray-900);background:var(--white);outline:none;transition:border-color .2s,box-shadow .2s}
+.form-control:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-light)}
+
+/* ── RECONCILE MODE ── */
+.cleared-check { width:18px; height:18px; cursor:pointer; accent-color: var(--success); flex-shrink:0; }
+.reconcile-banner { background:#1e3a8a; color:white; padding:10px 16px; border-radius:8px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.reconcile-banner .r-stat { text-align:center; min-width:80px; }
+.reconcile-banner .r-label { font-size:10px; opacity:.7; text-transform:uppercase; letter-spacing:.3px; }
+.reconcile-banner .r-val { font-size:15px; font-weight:800; }
+
+/* ── RECEIPT PHOTO ── */
+.photo-thumb { width:32px; height:32px; object-fit:cover; border-radius:4px; border:1px solid var(--gray-200); cursor:pointer; vertical-align:middle; }
+
 /* ── MOBILE RESPONSIVE ── */
 @media(max-width:640px){
   .main-content{padding:10px}
@@ -564,6 +583,42 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     <!-- ERROR / STATUS -->
     <div id="authStatus" style="margin-top:12px;font-size:12px;text-align:center;color:var(--danger);display:none"></div>
   </div>
+</div>
+</div>
+
+<!-- MODAL: CSV Import -->
+<div class="overlay" id="mCsvImport" onclick="if(event.target===this)closeModal('mCsvImport')">
+<div class="modal modal-lg" style="max-width:660px">
+  <div class="modal-header">
+    <span id="mCsvTitle">📥 Importar CSV</span>
+    <button class="modal-close" onclick="closeModal('mCsvImport')">✕</button>
+  </div>
+  <div class="modal-body">
+    <div id="csvStep1">
+      <p style="font-size:12px;color:var(--gray-500);margin-bottom:10px" id="csvInstructions">Pega el contenido CSV de tu banco aquí:</p>
+      <textarea id="csvRawInput" class="form-control" rows="7" style="font-family:monospace;font-size:12px" placeholder="date,description,amount&#10;01/15/2026,Walmart,-45.23&#10;01/16/2026,Paycheck,1200.00"></textarea>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="btn btn-primary" onclick="parseCsvPreview()">👁️ Vista previa</button>
+        <button class="btn btn-ghost" onclick="closeModal('mCsvImport')">Cancelar</button>
+      </div>
+    </div>
+    <div id="csvStep2" style="display:none">
+      <div id="csvColMap" style="margin-bottom:12px"></div>
+      <div id="csvPreviewTable" style="max-height:260px;overflow-y:auto;margin-bottom:12px;border:1px solid var(--gray-200);border-radius:6px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-primary" id="csvImportBtn" onclick="importCsvRows()">✅ Importar</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('csvStep1').style.display='block';document.getElementById('csvStep2').style.display='none'">← Atrás</button>
+      </div>
+    </div>
+  </div>
+</div>
+</div>
+
+<!-- MODAL: Photo Preview -->
+<div class="overlay" id="mPhotoPreview" onclick="closeModal('mPhotoPreview')" style="background:rgba(0,0,0,.85)">
+<div style="max-width:92vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;gap:12px">
+  <img id="photoPreviewImg" src="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain">
+  <button class="btn" style="background:rgba(255,255,255,.15);color:white;border:none" onclick="closeModal('mPhotoPreview')">✕ Cerrar</button>
 </div>
 </div>
 
@@ -1716,6 +1771,9 @@ function renderPageHeader(page){
   const type = page.type==='credit'?t('credit'):t('debit');
   const badge = page.type==='credit'?'type-credit':'type-debit';
   const es = state.lang==='es';
+  const debitExtra = page.type==='debit' ? `
+      <button class="btn btn-ghost btn-sm" onclick="toggleReconcileMode('${page.id}')">${_reconcilePageId===page.id?(es?'⚖️ Salir':'⚖️ Exit'):(es?'⚖️ Conciliar':'⚖️ Reconcile')}</button>
+      <button class="btn btn-ghost btn-sm" onclick="openCsvImport('${page.id}')">📥 ${es?'Importar CSV':'Import CSV'}</button>` : '';
   return `<div class="page-header">
     <input class="page-title-input" value="${esc(page.name)}" onchange="renamePage('${page.id}',this.value)" title="Haz clic para renombrar">
     <span class="type-badge ${badge}">${type}</span>
@@ -1725,6 +1783,7 @@ function renderPageHeader(page){
       <button class="btn btn-outline btn-sm" onclick="openStatement('${page.id}')">${t('compareStmt')}</button>
       <button class="btn btn-outline btn-sm" onclick="openRecurringModal('${page.id}')">⟳ ${es?'Recurrentes':'Recurring'}</button>
       <button class="btn btn-outline btn-sm" onclick="exportCSV('${page.id}')">${t('exportCSV')}</button>
+      ${debitExtra}
     </div>
   </div>`;
 }
@@ -1814,6 +1873,8 @@ function renderCredit(page){
         continue;
       }
       const hi = tx.highlighted ? 'row-hi' : '';
+      if(tx.receiptPhoto) _photoStore[tx.id] = tx.receiptPhoto;
+      const photoBtn2 = tx.receiptPhoto ? `<span style="cursor:pointer;margin-left:4px" onclick="openPhotoPreview('${tx.id}')" title="${es?'Ver recibo':'View receipt'}">📷</span>` : '';
       let catCells = '';
       for(const c of cats){
         if(tx.category===c.id){
@@ -1826,7 +1887,7 @@ function renderCredit(page){
       }
       rows += `<tr class="${hi}" data-txid="${tx.id}">
         <td><input class="cell-input date-in" data-txid="${tx.id}" data-field="date" value="${esc(tx.date)}" onchange="updateTxField('${page.id}','${tx.id}','date',this.value)"></td>
-        <td><input class="cell-input" data-txid="${tx.id}" data-field="detail" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:140px"></td>
+        <td><input class="cell-input" data-txid="${tx.id}" data-field="detail" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:140px">${photoBtn2}</td>
         ${catCells}
         <td>
           <div class="cell-actions">
@@ -1882,8 +1943,22 @@ function renderCredit(page){
 // ── DEBIT PAGE ──
 function renderDebit(page){
   const es_d = state.lang==='es';
+  // Reconcile mode
+  const isReconciling = _reconcilePageId === page.id;
+  const bookBal = (()=>{ let b=page.startBalance||0; for(const tx of page.transactions){b+=(tx.income||0)-(tx.expenses||0);} return b; })();
+  const clearedBal = (()=>{ let b=page.startBalance||0; for(const tx of page.transactions){ if(tx.cleared){b+=(tx.income||0)-(tx.expenses||0);} } return b; })();
+  const unclearedCount = page.transactions.filter(function(t){return !t.cleared;}).length;
+  const reconcileBanner = isReconciling ? '<div class="reconcile-banner">'
+    +'<div class="r-stat"><div class="r-label">'+(es_d?'En libros':'Book bal.')+'</div><div class="r-val">'+fmt(bookBal)+'</div></div>'
+    +'<div class="r-stat"><div class="r-label">'+(es_d?'Conciliado':'Cleared')+'</div><div class="r-val">'+fmt(clearedBal)+'</div></div>'
+    +'<div class="r-stat"><div class="r-label">'+(es_d?'Diferencia':'Difference')+'</div><div class="r-val" style="color:'+(Math.abs(bookBal-clearedBal)<0.01?'#86efac':'#fca5a5')+'">'+fmt(bookBal-clearedBal)+'</div></div>'
+    +'<div class="r-stat"><div class="r-label">'+(es_d?'Sin conciliar':'Uncleared')+'</div><div class="r-val">'+unclearedCount+'</div></div>'
+    +'<div style="display:flex;gap:6px;flex-wrap:wrap">'
+    +'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:white;border:none;cursor:pointer" onclick="markAllCleared(\''+page.id+'\')">'+(es_d?'✓ Todo':'✓ All')+'</button>'
+    +'<button class="btn btn-sm" style="background:rgba(255,255,255,.2);color:white;border:none;cursor:pointer" onclick="toggleReconcileMode(\''+page.id+'\')">'+(es_d?'Salir':'Exit')+'</button>'
+    +'</div></div>' : '';
   // Low balance alert
-  const curBalance = (()=>{ let b=page.startBalance||0; for(const tx of page.transactions){b+=(tx.income||0)-(tx.expenses||0);} return b; })();
+  const curBalance = bookBal;
   const thresh = page.lowBalanceThreshold || 0;
   const lowAlert = thresh > 0 && curBalance < thresh ? `
     <div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px 16px;margin-bottom:14px;display:flex;align-items:center;gap:10px">
@@ -1914,16 +1989,21 @@ function renderDebit(page){
 
   let rows = '';
   if(page.transactions.length===0){
-    rows = `<tr><td colspan="7" class="no-data">${t('noTx')}</td></tr>`;
+    rows = `<tr><td colspan="${isReconciling?8:7}" class="no-data">${t('noTx')}</td></tr>`;
   } else {
     for(const tx of page.transactions){
       const txRunBal = runBal[tx.id]||0;
       const balClass = txRunBal>=0?'amt-positive':'amt-negative';
       const hi = tx.highlighted?'row-hi':'';
-      rows += `<tr class="${hi}" data-txid="${tx.id}">
+      const rowOpacity = isReconciling && tx.cleared ? 'opacity:0.55;' : '';
+      if(tx.receiptPhoto) _photoStore[tx.id] = tx.receiptPhoto;
+      const photoBtn = tx.receiptPhoto ? `<span style="cursor:pointer;margin-left:4px" onclick="openPhotoPreview('${tx.id}')" title="${es_d?'Ver recibo':'View receipt'}">📷</span>` : '';
+      const clearCell = isReconciling ? `<td style="padding:4px 8px"><input type="checkbox" class="cleared-check" ${tx.cleared?'checked':''} onchange="toggleCleared('${page.id}','${tx.id}')"></td>` : '';
+      rows += `<tr class="${hi}" data-txid="${tx.id}" style="${rowOpacity}">
+        ${clearCell}
         <td><input class="cell-input date-in" value="${esc(tx.date)}" onchange="updateTxField('${page.id}','${tx.id}','date',this.value)"></td>
         <td><input class="cell-input check-in" value="${esc(tx.checkNum||'')}" onchange="updateTxField('${page.id}','${tx.id}','checkNum',this.value)"></td>
-        <td><input class="cell-input" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:180px"></td>
+        <td><input class="cell-input" value="${esc(tx.detail)}" onchange="updateTxField('${page.id}','${tx.id}','detail',this.value)" style="min-width:180px">${photoBtn}</td>
         <td class="amt"><input class="cell-input num" value="${fmtNum(tx.expenses)}" onchange="updateTxField('${page.id}','${tx.id}','expenses',this.value)" onblur="renderAll()"></td>
         <td class="amt"><input class="cell-input num" value="${fmtNum(tx.income)}" onchange="updateTxField('${page.id}','${tx.id}','income',this.value)" onblur="renderAll()"></td>
         <td class="amt" style="font-weight:600;color:${txRunBal>=0?'var(--success)':'var(--danger)'}">${fmt(txRunBal)}</td>
@@ -1968,11 +2048,12 @@ function renderDebit(page){
     </div>
   </div>`;
 
-  return renderPageHeader(page) + lowAlert + summaryHTML + `
+  return renderPageHeader(page) + reconcileBanner + lowAlert + summaryHTML + `
   <div class="card">
     <div class="table-wrap">
       <table>
         <thead><tr>
+          ${isReconciling ? '<th style="width:30px"></th>' : ''}
           <th style="min-width:90px">${t('date')}</th>
           <th style="min-width:80px">${t('checkNum')}</th>
           <th style="min-width:200px">${t('detail')}</th>
@@ -1983,6 +2064,7 @@ function renderDebit(page){
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr class="tr-totals">
+          ${isReconciling ? '<td></td>' : ''}
           <td colspan="3">${t('total')}</td>
           <td class="amt amt-negative">${fmt(totalExp)}</td>
           <td class="amt amt-positive">${fmt(totalInc)}</td>
@@ -2472,6 +2554,8 @@ function openAddTx(pageId){
   const p = state.pages.find(x=>x.id===pageId); if(!p) return;
   buildTxForm(p, null);
   openModal('mTx');
+  _txPhotoData = null;
+  clearTxPhoto();
 }
 
 function openEditTx(pageId, txId){
@@ -2557,6 +2641,20 @@ function buildTxForm(page, tx){
     </div>
     <div class="fg"><label>${t('notes')} <small style="font-weight:400;text-transform:none;letter-spacing:0">${t('optional')}</small></label><input class="fc" id="tx-notes" type="text" value="${esc(tx?(tx.notes||''):'')}">`+ `</div>` + bizToggle;
   }
+  // Photo field (appended for both credit and debit)
+  const es2 = state.lang==='es';
+  body += `
+    <div class="form-group" id="tx-photo-fg" style="margin-top:10px;padding-top:10px;border-top:1px solid var(--gray-200)">
+      <label class="form-label" style="font-size:12px;font-weight:700;color:var(--gray-600);margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.4px">📷 ${es2?'Foto de recibo (opcional)':'Receipt photo (optional)'}</label>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <input type="file" id="tx-photo-input" accept="image/*" capture="environment" style="display:none" onchange="handleTxPhoto(this)">
+        <button type="button" class="btn btn-ghost btn-sm" onclick="document.getElementById('tx-photo-input').click()">📷 ${es2?'Seleccionar foto':'Select photo'}</button>
+        <div id="tx-photo-wrap" style="display:none;align-items:center;gap:6px">
+          <img id="tx-photo-thumb" src="" class="photo-thumb">
+          <button type="button" class="btn btn-ghost btn-xs" onclick="clearTxPhoto()">✕</button>
+        </div>
+      </div>
+    </div>`;
   document.getElementById('mTxBody').innerHTML = body;
   // focus first field
   setTimeout(()=>{ const el=document.getElementById('tx-date'); if(el)el.focus(); },200);
@@ -2601,7 +2699,9 @@ function saveTx(){
       const tx = p.transactions.find(x=>x.id===editingTxId);
       if(tx){ Object.assign(tx,{date,detail,amount,category,notes,business:isBusiness,txType,fromAccountId}); }
     } else {
-      p.transactions.push({id:uid(),date,detail,amount,category,notes,highlighted:false,business:isBusiness,txType,fromAccountId});
+      const newTx = {id:uid(),date,detail,amount,category,notes,highlighted:false,business:isBusiness,txType,fromAccountId};
+      if(_txPhotoData){ newTx.receiptPhoto = _txPhotoData; } _txPhotoData = null;
+      p.transactions.push(newTx);
     }
     // If paying from a debit account, auto-create the matching expense there
     if(txType==='payment' && fromAccountId && !editingTxId){
@@ -2629,7 +2729,9 @@ function saveTx(){
       const tx = p.transactions.find(x=>x.id===editingTxId);
       if(tx){ Object.assign(tx,{date,checkNum,detail,expenses,income,notes,business:isBusiness}); }
     } else {
-      p.transactions.push({id:uid(),date,checkNum,detail,expenses,income,notes,highlighted:false,business:isBusiness});
+      const newTx = {id:uid(),date,checkNum,detail,expenses,income,notes,highlighted:false,business:isBusiness};
+      if(_txPhotoData){ newTx.receiptPhoto = _txPhotoData; } _txPhotoData = null;
+      p.transactions.push(newTx);
     }
   }
   save(); renderAll(); closeModal('mTx');
@@ -4185,6 +4287,11 @@ function renderCalendar(){
       }).join('')}
     </div>` : '';
 
+  const notifGranted = typeof Notification!=='undefined' && Notification.permission==='granted';
+  const notifBtn = typeof Notification==='undefined' ? '' : notifGranted
+    ? `<button class="btn btn-ghost btn-sm" onclick="checkBillsDue()">🔔 ${es?'Verificar alertas':'Check alerts'}</button>`
+    : `<button class="btn btn-ghost btn-sm" onclick="requestNotifPermission()">🔔 ${es?'Activar notificaciones':'Enable notifications'}</button>`;
+
   return `
     <div class="page-header">
       <div style="display:flex;align-items:center;gap:12px">
@@ -4193,6 +4300,7 @@ function renderCalendar(){
         <button class="btn btn-ghost btn-sm" onclick="calNext()">›</button>
       </div>
       <div class="page-actions">
+        ${notifBtn}
         <button class="btn btn-primary btn-sm" onclick="openAddBill()">+ ${es?'Agregar pago':'Add payment'}</button>
       </div>
     </div>
@@ -5613,6 +5721,239 @@ function openBillHistory(billId){
 }
 
 // ═══════════════════════════════════════════════
+// FEATURE: RECONCILIATION MODE
+// ═══════════════════════════════════════════════
+let _reconcilePageId = null;
+
+function toggleReconcileMode(pageId){
+  _reconcilePageId = (_reconcilePageId === pageId) ? null : pageId;
+  renderAll();
+}
+
+function toggleCleared(pageId, txId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  const tx = p.transactions.find(x=>x.id===txId); if(!tx) return;
+  tx.cleared = !tx.cleared;
+  save();
+  renderAll();
+}
+
+function markAllCleared(pageId){
+  const p = state.pages.find(x=>x.id===pageId); if(!p) return;
+  p.transactions.forEach(tx=>{ tx.cleared = true; });
+  save(); renderAll();
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: CSV BANK STATEMENT IMPORT
+// ═══════════════════════════════════════════════
+let _csvPageId = null;
+let _csvParsed = [];
+
+function openCsvImport(pageId){
+  _csvPageId = pageId;
+  const es = state.lang==='es';
+  const p = state.pages.find(x=>x.id===pageId);
+  document.getElementById('mCsvTitle').textContent = '📥 '+(es?'Importar CSV':'Import CSV')+(p?' — '+p.name:'');
+  document.getElementById('csvInstructions').textContent = es ? 'Pega el CSV de tu banco (con encabezados):' : 'Paste your bank CSV (with headers):';
+  document.getElementById('csvRawInput').value='';
+  document.getElementById('csvStep1').style.display='block';
+  document.getElementById('csvStep2').style.display='none';
+  openModal('mCsvImport');
+}
+
+function _parseCSVText(text){
+  const rows=[];
+  for(const line of text.split('\n')){
+    if(!line.trim()) continue;
+    const cols=[]; let cur='', inQ=false;
+    for(let i=0;i<line.length;i++){
+      const c=line[i];
+      if(c==='"'){inQ=!inQ;}
+      else if(c===','&&!inQ){cols.push(cur.trim());cur='';}
+      else cur+=c;
+    }
+    cols.push(cur.trim());
+    rows.push(cols);
+  }
+  return rows;
+}
+
+function parseCsvPreview(){
+  const es=state.lang==='es';
+  const raw=document.getElementById('csvRawInput').value.trim();
+  if(!raw){toast(es?'Pega el contenido CSV primero.':'Paste CSV content first.','warn',2500);return;}
+  const rows=_parseCSVText(raw);
+  if(rows.length<2){toast(es?'Necesita al menos 2 filas.':'Needs at least 2 rows.','warn',2500);return;}
+  const headers=rows[0];
+  _csvParsed=rows.slice(1).filter(r=>r.some(c=>c));
+  const lower=headers.map(h=>h.toLowerCase());
+  const autoIdx=(terms)=>lower.findIndex(h=>terms.some(t=>h.includes(t)));
+  const dateIdx  =autoIdx(['date','fecha']);
+  const descIdx  =autoIdx(['desc','detail','memo','narr','name']);
+  const amtIdx   =autoIdx(['amount','monto','importe']);
+  const debitIdx =autoIdx(['debit','withdrawal','cargo','out']);
+  const creditIdx=autoIdx(['credit','deposit','abono','in']);
+  const noneOpt='<option value="-1">— '+(es?'ninguna':'none')+' —</option>';
+  const selOpts=headers.map((h,i)=>'<option value="'+i+'">'+esc(h)+'</option>').join('');
+  const sel=(id)=>'<select class="form-control" id="'+id+'" onchange="refreshCsvPreview()">'+noneOpt+selOpts+'</select>';
+  document.getElementById('csvColMap').innerHTML='<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:13px;margin-bottom:8px">'
+    +'<div><label class="form-label">'+(es?'Fecha':'Date')+'</label>'+sel('csv_date')+'</div>'
+    +'<div><label class="form-label">'+(es?'Descripción':'Description')+'</label>'+sel('csv_desc')+'</div>'
+    +'<div><label class="form-label">'+(es?'Monto (una col)':'Amount (1 col)')+'</label>'+sel('csv_amt')+'</div>'
+    +'<div><label class="form-label">'+(es?'Cargo/Débito':'Debit/charge')+'</label>'+sel('csv_debit')+'</div>'
+    +'<div><label class="form-label">'+(es?'Abono/Crédito':'Credit/deposit')+'</label>'+sel('csv_credit')+'</div>'
+    +'</div>';
+  const setV=(id,v)=>{if(v>=0){const el=document.getElementById(id);if(el)el.value=v;}};
+  setV('csv_date',dateIdx);setV('csv_desc',descIdx);setV('csv_amt',amtIdx);setV('csv_debit',debitIdx);setV('csv_credit',creditIdx);
+  document.getElementById('csvStep1').style.display='none';
+  document.getElementById('csvStep2').style.display='block';
+  refreshCsvPreview();
+}
+
+function _csvColVal(row,id){
+  const el=document.getElementById(id);if(!el)return null;
+  const idx=parseInt(el.value);if(isNaN(idx)||idx<0||idx>=row.length)return null;
+  return row[idx];
+}
+function _csvAmt(s){if(!s)return 0;const v=parseFloat(String(s).replace(/[$,\s]/g,''));return isNaN(v)?0:v;}
+
+function refreshCsvPreview(){
+  const es=state.lang==='es';
+  const preview=_csvParsed.slice(0,25);
+  const rows=preview.map(function(row){
+    const date=_csvColVal(row,'csv_date')||'';
+    const desc=_csvColVal(row,'csv_desc')||'';
+    const rawAmt=_csvAmt(_csvColVal(row,'csv_amt'));
+    const rawD=_csvAmt(_csvColVal(row,'csv_debit'));
+    const rawC=_csvAmt(_csvColVal(row,'csv_credit'));
+    let exp=0,inc=0;
+    const amtSel=document.getElementById('csv_amt');
+    if(amtSel&&parseInt(amtSel.value)>=0&&rawAmt!==0){
+      if(rawAmt<0)exp=Math.abs(rawAmt);else inc=rawAmt;
+    }else{exp=Math.abs(rawD);inc=Math.abs(rawC);}
+    return '<tr style="border-bottom:1px solid var(--gray-100)">'
+      +'<td style="padding:5px 8px;font-size:12px">'+esc(date)+'</td>'
+      +'<td style="padding:5px 8px;font-size:12px">'+esc(desc.slice(0,38))+'</td>'
+      +'<td style="padding:5px 8px;text-align:right;font-size:12px;color:var(--danger);font-weight:600">'+(exp?fmt(exp):'')+'</td>'
+      +'<td style="padding:5px 8px;text-align:right;font-size:12px;color:var(--success);font-weight:600">'+(inc?fmt(inc):'')+'</td>'
+      +'</tr>';
+  }).join('');
+  document.getElementById('csvPreviewTable').innerHTML='<table style="width:100%;border-collapse:collapse">'
+    +'<thead><tr style="background:var(--gray-100)">'
+    +'<th style="padding:6px 8px;font-size:11px;text-align:left">'+(es?'Fecha':'Date')+'</th>'
+    +'<th style="padding:6px 8px;font-size:11px;text-align:left">'+(es?'Descripción':'Description')+'</th>'
+    +'<th style="padding:6px 8px;font-size:11px;text-align:right">'+(es?'Gasto':'Expense')+'</th>'
+    +'<th style="padding:6px 8px;font-size:11px;text-align:right">'+(es?'Ingreso':'Income')+'</th>'
+    +'</tr></thead><tbody>'+rows+'</tbody></table>'
+    +(_csvParsed.length>25?'<div style="padding:6px 8px;font-size:11px;color:var(--gray-400)">'+(es?'Mostrando 25 de '+_csvParsed.length:'Showing 25 of '+_csvParsed.length)+'</div>':'');
+  document.getElementById('csvImportBtn').textContent='✅ '+(es?'Importar '+_csvParsed.length:'Import '+_csvParsed.length);
+}
+
+function importCsvRows(){
+  const es=state.lang==='es';
+  const p=state.pages.find(x=>x.id===_csvPageId);if(!p)return;
+  let imported=0;
+  for(const row of _csvParsed){
+    const date=_csvColVal(row,'csv_date')||'';
+    const desc=_csvColVal(row,'csv_desc')||'';
+    const rawAmt=_csvAmt(_csvColVal(row,'csv_amt'));
+    const rawD=_csvAmt(_csvColVal(row,'csv_debit'));
+    const rawC=_csvAmt(_csvColVal(row,'csv_credit'));
+    let exp=0,inc=0;
+    const amtSel=document.getElementById('csv_amt');
+    if(amtSel&&parseInt(amtSel.value)>=0&&rawAmt!==0){
+      if(rawAmt<0)exp=Math.abs(rawAmt);else inc=rawAmt;
+    }else{exp=Math.abs(rawD);inc=Math.abs(rawC);}
+    if(!desc&&!exp&&!inc)continue;
+    p.transactions.push({id:uid(),date,checkNum:'',detail:desc,expenses:exp||null,income:inc||null,notes:'',highlighted:false,business:false});
+    imported++;
+  }
+  save();renderAll();
+  closeModal('mCsvImport');
+  toast('✅ '+(es?imported+' transacciones importadas':imported+' transactions imported'),'ok',3000);
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: PUSH NOTIFICATIONS FOR UPCOMING BILLS
+// ═══════════════════════════════════════════════
+function initBillNotifications(){
+  if(!('Notification' in window)) return;
+  if(Notification.permission==='granted'){
+    if(!window._billCheckDone){ window._billCheckDone=true; checkBillsDue(); }
+  }
+}
+
+async function requestNotifPermission(){
+  const es=state.lang==='es';
+  if(!('Notification' in window)){toast(es?'Tu navegador no soporta notificaciones.':'Notifications not supported.','warn',3000);return;}
+  const perm=await Notification.requestPermission();
+  if(perm==='granted'){
+    toast(es?'🔔 Notificaciones activadas':'🔔 Notifications enabled','ok',2500);
+    window._billCheckDone=false;
+    initBillNotifications();
+  }else{
+    toast(es?'Notificaciones bloqueadas en este dispositivo.':'Notifications blocked.','warn',2500);
+  }
+}
+
+function checkBillsDue(){
+  if(!('Notification' in window)||Notification.permission!=='granted') return;
+  const now=new Date();
+  const calKey=now.getFullYear()+'-'+String(now.getMonth()+1).padStart(2,'0');
+  const in3=new Date(now);in3.setDate(in3.getDate()+3);
+  const es=state.lang==='es';
+  const dueSoon=[];
+  for(const b of (state.bills||[])){
+    if(b.paidMonths&&b.paidMonths[calKey]) continue;
+    if(b.dueDay>=now.getDate()&&b.dueDay<=in3.getDate()) dueSoon.push(b.name+(b.amount?' — '+fmt(b.amount):''));
+  }
+  for(const p of state.pages.filter(x=>x.type==='credit'&&x.paymentDueDay)){
+    if(p.paidMonths&&p.paidMonths[calKey]) continue;
+    if(p.paymentDueDay>=now.getDate()&&p.paymentDueDay<=in3.getDate()) dueSoon.push(p.name+' ('+(es?'Tarjeta':'Card')+')');
+  }
+  if(dueSoon.length){
+    new Notification('💰 ContaFácil — '+(es?'Pagos próximos':'Bills due soon'),{
+      body:dueSoon.slice(0,5).join('\n'),icon:'/icon-192.png',tag:'bills-due'
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════
+// FEATURE: RECEIPT PHOTO
+// ═══════════════════════════════════════════════
+const _photoStore = {};
+let _txPhotoData = null;
+
+function handleTxPhoto(input){
+  const file=input.files[0];if(!file)return;
+  const reader=new FileReader();
+  reader.onload=function(e){
+    _txPhotoData=e.target.result;
+    const thumb=document.getElementById('tx-photo-thumb');
+    const wrap=document.getElementById('tx-photo-wrap');
+    if(thumb){thumb.src=_txPhotoData;}
+    if(wrap){wrap.style.display='flex';}
+  };
+  reader.readAsDataURL(file);
+}
+
+function clearTxPhoto(){
+  _txPhotoData=null;
+  const inp=document.getElementById('tx-photo-input');
+  const wrap=document.getElementById('tx-photo-wrap');
+  if(inp)inp.value='';
+  if(wrap)wrap.style.display='none';
+}
+
+function openPhotoPreview(txId){
+  const src=_photoStore[txId];if(!src)return;
+  const img=document.getElementById('photoPreviewImg');
+  if(img)img.src=src;
+  openModal('mPhotoPreview');
+}
+
+// ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
 load();                                  // sync: localStorage (instant)
@@ -5630,6 +5971,7 @@ initBackupSync();                        // async: restore hard-backup handle
 processRecurringTransactions();          // auto-create any recurring tx due today
 takeNetWorthSnapshot();                  // monthly net worth snapshot (once per month)
 sbInit();                                // async: restore Supabase session + cloud sync
+initBillNotifications();                 // fire bill-due notifications if permission already granted
 
 // ── Periodic writes ──
 // Main file: every 3 min (belt-and-suspenders on top of the per-save trigger)
