@@ -543,8 +543,12 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     <!-- SIGNED OUT: Step 2 — enter OTP -->
     <div class="auth-step" id="authStep2">
       <p style="color:var(--gray-500);font-size:13px;margin-bottom:4px;line-height:1.6">
-        Código enviado a <span class="auth-email-display" id="authEmailDisplay"></span>.
-        Ingresa los 6 dígitos:
+        Código enviado a <span class="auth-email-display" id="authEmailDisplay"></span>.<br>
+        <strong style="color:var(--gray-700)">Ingresa los 6 dígitos del correo aquí abajo.</strong>
+        <span style="font-size:11px;display:block;margin-top:3px;color:var(--gray-400)">
+          (Ignora el botón de enlace en el correo — solo usa el código de 6 dígitos aquí.
+          / Ignore any link button in the email — just enter the 6-digit code here.)
+        </span>
       </p>
       <div class="auth-otp-grid" id="otpGrid">
         <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,0)" onkeydown="otpBack(event,this,0)">
@@ -5185,16 +5189,39 @@ function deleteRecurring(pageId, recId){
 
 function sbInit(){
   if(typeof supabase === 'undefined'){ console.warn('Supabase SDK not loaded'); return; }
-  sb = supabase.createClient(SB_URL, SB_KEY);
-  // Watch auth state changes (handles magic-link callbacks, sign-out, etc.)
+  // Use implicit flow — required for static GitHub Pages (no server to complete PKCE exchange).
+  // With implicit flow the magic link redirects with #access_token=... in the URL hash,
+  // which the SDK picks up automatically regardless of which browser opens the link.
+  sb = supabase.createClient(SB_URL, SB_KEY, {
+    auth: { flowType: 'implicit' }
+  });
+
+  // Watch auth state changes (handles magic-link callbacks, token refresh, sign-out)
   sb.auth.onAuthStateChange(async (event, session) => {
+    const wasSignedOut = !sbUser;
     sbUser = session?.user || null;
     updateAuthBadge();
-    if(sbUser && (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED')){
-      await sbPull(false);
+
+    if(event === 'SIGNED_IN'){
+      // Clear the auth tokens from the URL bar so they don't look like "API keys"
+      if(window.location.hash && window.location.hash.includes('access_token')){
+        history.replaceState(null, '', window.location.pathname + window.location.search);
+      }
+      // Only show the toast + pull when this is a fresh sign-in (not a token refresh on reload)
+      if(wasSignedOut){
+        const es = state.lang === 'es';
+        toast('✅ ' + (es ? '¡Sesión iniciada! Sincronizando…' : 'Signed in! Syncing…'), 'ok', 3500);
+        closeModal('mAuth');
+        await sbPullOrPushNew();
+        updateAuthBadge();
+      }
+    } else if(event === 'TOKEN_REFRESHED'){
+      // Silent background refresh — just keep data in sync
+      if(sbUser) await sbPull(false);
     }
   });
-  // Restore session from storage (returns instantly if already signed in)
+
+  // Restore existing session from localStorage (instant, no network)
   sb.auth.getSession().then(({data:{session}}) => {
     sbUser = session?.user || null;
     updateAuthBadge();
