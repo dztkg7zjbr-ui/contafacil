@@ -4313,6 +4313,7 @@ function renderCalendar(){
           ${dStr} ${apBadge}
           ${item.amount?`<span style="font-weight:600;font-size:13px">${fmt(item.amount)}</span>`:''}
           <button class="btn btn-xs btn-ghost" onclick="event.stopPropagation();openBillHistory('${item.id}')">📋</button>
+          ${item.type==='bill'?`<button class="btn btn-xs btn-outline" onclick="event.stopPropagation();editBill('${item.id}')">✏️</button>`:''}
           <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();openCalDay(${item.day},${calMonth},${calYear})">Ver</button>
         </div>`;
       }).join('')}
@@ -4424,10 +4425,16 @@ function _renderCalDayModal(day, month, year){
             ${acctName?`<span style="font-size:11px;color:var(--gray-500)">← ${esc(acctName)}</span>`:''}
           </div>
         </div>
-        <button class="btn btn-sm ${paid?'btn-outline':'btn-primary'}"
-          onclick="toggleBillPaid('${b.id}','${calKey}')">
-          ${paid?(es?'✓ Pagado':'✓ Paid'):(es?'Marcar pagado':'Mark paid')}
-        </button>
+        <div style="display:flex;flex-direction:column;gap:6px;align-items:flex-end">
+          <button class="btn btn-sm ${paid?'btn-outline':'btn-primary'}"
+            onclick="toggleBillPaid('${b.id}','${calKey}')">
+            ${paid?(es?'✓ Pagado':'✓ Paid'):(es?'Marcar pagado':'Mark paid')}
+          </button>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-xs btn-outline" onclick="closeModal('mCalDay');editBill('${b.id}')">✏️ ${es?'Editar':'Edit'}</button>
+            <button class="btn btn-xs btn-danger" onclick="if(confirm(${JSON.stringify(es?'¿Eliminar este pago?':'Delete this payment?')})){deleteBill('${b.id}');closeModal('mCalDay');}">🗑</button>
+          </div>
+        </div>
       </div>
     </div>`;
   }
@@ -4534,6 +4541,25 @@ function buildBillForm(bill){
     <div class="fg"><label>${es?'Notas (opcional)':'Notes (optional)'}</label>
       <input class="fc" id="bill-notes" type="text" value="${esc(bill?(bill.notes||''):'')}" ></div>`;
   setTimeout(()=>document.getElementById('bill-name')?.focus(),150);
+  // Show/hide delete button in footer based on whether we're editing
+  const billFoot = document.querySelector('#mBill .modal-foot');
+  if(billFoot){
+    const existing = billFoot.querySelector('.bill-del-btn');
+    if(existing) existing.remove();
+    if(bill){
+      const delBtn = document.createElement('button');
+      delBtn.className = 'btn btn-danger bill-del-btn';
+      delBtn.style.marginRight = 'auto';
+      delBtn.textContent = es ? '🗑 Eliminar' : '🗑 Delete';
+      delBtn.onclick = function(){
+        if(confirm(es?'¿Eliminar este pago?':'Delete this payment?')){
+          deleteBill(bill.id);
+          closeModal('mBill');
+        }
+      };
+      billFoot.insertBefore(delBtn, billFoot.firstChild);
+    }
+  }
 }
 
 function saveBill(){
