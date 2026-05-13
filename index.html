@@ -841,7 +841,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 </div>
 
 <!-- MODAL: Calendar day detail -->
-<div class="overlay" id="mCalDay">
+<div class="overlay" id="mCalDay" onclick="if(event.target===this)closeModal('mCalDay')">
 <div class="modal">
   <div class="modal-head">
     <div class="modal-title" id="mCalDayTitle">Día</div>
@@ -4304,17 +4304,20 @@ function renderCalendar(){
         const apBadge = item.autopay
           ? `<span style="font-size:10px;background:#dcfce7;color:#16a34a;padding:1px 5px;border-radius:3px">AUTO</span>`
           : `<span style="font-size:10px;background:#fef3c7;color:#b45309;padding:1px 5px;border-radius:3px">MANUAL</span>`;
-        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--gray-100)">
-          <span>${icon}</span>
-          <div style="flex:1">
-            <span style="font-weight:600;font-size:13px">${esc(item.name)}</span>
-            ${item.label?`<span style="font-size:10px;color:var(--gray-400);margin-left:4px">${esc(item.label)}</span>`:''}
+        const rowClick = item.type==='bill'
+          ? `editBill('${item.id}')`
+          : `openCalDay(${item.day},${calMonth},${calYear})`;
+        return `<div style="display:flex;align-items:center;gap:12px;padding:13px 16px;border-bottom:1px solid var(--gray-100);cursor:pointer;-webkit-tap-highlight-color:rgba(0,0,0,.05)" onclick="${rowClick}">
+          <span style="font-size:20px;flex-shrink:0">${icon}</span>
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(item.name)}</div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:3px;flex-wrap:wrap">
+              ${dStr}
+              ${apBadge}
+              ${item.amount?`<span style="font-weight:700;font-size:13px">${fmt(item.amount)}</span>`:''}
+            </div>
           </div>
-          ${dStr} ${apBadge}
-          ${item.amount?`<span style="font-weight:600;font-size:13px">${fmt(item.amount)}</span>`:''}
-          <button class="btn btn-xs btn-ghost" onclick="event.stopPropagation();openBillHistory('${item.id}')">📋</button>
-          ${item.type==='bill'?`<button class="btn btn-xs btn-outline" onclick="event.stopPropagation();editBill('${item.id}')">✏️</button>`:''}
-          <button class="btn btn-xs btn-outline" onclick="event.stopPropagation();openCalDay(${item.day},${calMonth},${calYear})">Ver</button>
+          <span style="color:var(--gray-300);font-size:18px;flex-shrink:0">›</span>
         </div>`;
       }).join('')}
     </div>` : '';
@@ -4430,9 +4433,9 @@ function _renderCalDayModal(day, month, year){
             onclick="toggleBillPaid('${b.id}','${calKey}')">
             ${paid?(es?'✓ Pagado':'✓ Paid'):(es?'Marcar pagado':'Mark paid')}
           </button>
-          <div style="display:flex;gap:4px">
-            <button class="btn btn-xs btn-outline" onclick="closeModal('mCalDay');editBill('${b.id}')">✏️ ${es?'Editar':'Edit'}</button>
-            <button class="btn btn-xs btn-danger" onclick="if(confirm(${JSON.stringify(es?'¿Eliminar este pago?':'Delete this payment?')})){deleteBill('${b.id}');closeModal('mCalDay');}">🗑</button>
+          <div style="display:flex;gap:6px;margin-top:4px">
+            <button class="btn btn-sm btn-outline" onclick="closeModal('mCalDay');editBill('${b.id}')">✏️ ${es?'Editar':'Edit'}</button>
+            <button class="btn btn-sm btn-danger" onclick="if(confirm(${JSON.stringify(es?'¿Eliminar este pago?':'Delete this payment?')})){deleteBill('${b.id}');closeModal('mCalDay');}">🗑 ${es?'Eliminar':'Delete'}</button>
           </div>
         </div>
       </div>
