@@ -524,7 +524,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     <button class="mbn-btn" id="mbn-cards" onclick="switchTab('cards')"><span class="mbn-icon">💳</span><span id="mbn-cards-lbl">Tarjetas</span></button>
     <button class="mbn-btn" id="mbn-debit" onclick="switchTab('debit-overview')"><span class="mbn-icon">🏦</span><span id="mbn-debit-lbl">Cuentas</span></button>
     <button class="mbn-btn" id="mbn-biz" onclick="switchTab('business')"><span class="mbn-icon">🏢</span><span id="mbn-biz-lbl">Negocio</span></button>
-    <button class="mbn-btn" id="mbn-cloud" onclick="openAuthModal()"><span class="mbn-icon">☁️</span><span>Nube</span></button>
+    <button class="mbn-btn" id="mbn-cloud" onclick="openAuthModal()"><span class="mbn-icon">☁️</span><span id="mbn-cloud-lbl">Nube</span></button>
   </nav>
   <div class="fab-overlay" id="fabOverlay" onclick="closeFab()"></div>
   <div class="fab-menu" id="fabMenu" style="display:none"></div>
@@ -542,9 +542,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 
     <!-- SIGNED OUT: Step 1 — enter email -->
     <div class="auth-step active" id="authStep1">
-      <p style="color:var(--gray-500);font-size:13px;margin-bottom:16px;line-height:1.6">
-        Ingresa tu correo y te enviaremos un código de 6 dígitos para iniciar sesión.<br>
-        <span style="font-size:11px;opacity:.7">Enter your email and we'll send a 6-digit code to sign in.</span>
+      <p id="authStep1Desc" style="color:var(--gray-500);font-size:13px;margin-bottom:16px;line-height:1.6">
+        Ingresa tu correo y te enviaremos un código para iniciar sesión.<br>
+        <span style="font-size:11px;opacity:.7">Enter your email and we'll send you a code to sign in.</span>
       </p>
       <div class="form-group">
         <label class="form-label">Correo / Email</label>
@@ -576,13 +576,13 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
                onkeydown="if(event.key==='Enter')sbVerifyCode()">
       </div>
       <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" onclick="showAuthStep(1)" style="flex:0">← Atrás</button>
+        <button class="btn btn-ghost btn-sm" id="authBackBtn" onclick="showAuthStep(1)" style="flex:0">← Atrás</button>
         <button class="btn btn-primary" style="flex:1" onclick="sbVerifyCode()" id="authVerifyBtn">
           ✅ Verificar
         </button>
       </div>
       <div style="margin-top:10px;text-align:center">
-        <button class="btn btn-ghost btn-sm" onclick="sbSendCode(true)">🔁 Reenviar código</button>
+        <button class="btn btn-ghost btn-sm" id="authResendBtn" onclick="sbSendCode(true)">🔁 Reenviar código</button>
       </div>
     </div>
 
@@ -634,8 +634,8 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <p style="font-size:12px;color:var(--gray-500);margin-bottom:10px" id="csvInstructions">Pega el contenido CSV de tu banco aquí:</p>
       <textarea id="csvRawInput" class="form-control" rows="7" style="font-family:monospace;font-size:12px" placeholder="date,description,amount&#10;01/15/2026,Walmart,-45.23&#10;01/16/2026,Paycheck,1200.00"></textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="btn btn-primary" onclick="parseCsvPreview()">👁️ Vista previa</button>
-        <button class="btn btn-ghost" onclick="closeModal('mCsvImport')">Cancelar</button>
+        <button class="btn btn-primary" id="csvPreviewBtn" onclick="parseCsvPreview()">👁️ Vista previa</button>
+        <button class="btn btn-ghost" id="csvCancelBtn" onclick="closeModal('mCsvImport')">Cancelar</button>
       </div>
     </div>
     <div id="csvStep2" style="display:none">
@@ -643,7 +643,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <div id="csvPreviewTable" style="max-height:260px;overflow-y:auto;margin-bottom:12px;border:1px solid var(--gray-200);border-radius:6px"></div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-primary" id="csvImportBtn" onclick="importCsvRows()">✅ Importar</button>
-        <button class="btn btn-ghost" onclick="document.getElementById('csvStep1').style.display='block';document.getElementById('csvStep2').style.display='none'">← Atrás</button>
+        <button class="btn btn-ghost" id="csvBackBtn" onclick="document.getElementById('csvStep1').style.display='block';document.getElementById('csvStep2').style.display='none'">← Atrás</button>
       </div>
     </div>
   </div>
@@ -654,7 +654,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 <div class="overlay" id="mPhotoPreview" onclick="closeModal('mPhotoPreview')" style="background:rgba(0,0,0,.85)">
 <div style="max-width:92vw;max-height:92vh;display:flex;flex-direction:column;align-items:center;gap:12px">
   <img id="photoPreviewImg" src="" style="max-width:100%;max-height:80vh;border-radius:8px;object-fit:contain">
-  <button class="btn" style="background:rgba(255,255,255,.15);color:white;border:none" onclick="closeModal('mPhotoPreview')">✕ Cerrar</button>
+  <button class="btn" id="photoCloseBtn" style="background:rgba(255,255,255,.15);color:white;border:none" onclick="closeModal('mPhotoPreview')">✕ Cerrar</button>
 </div>
 </div>
 
@@ -847,7 +847,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body" id="mRecurringBody"></div>
   <div class="modal-foot">
-    <button class="btn btn-ghost" onclick="closeModal('mRecurring')">Cerrar</button>
+    <button class="btn btn-ghost" id="mRecurringClose" onclick="closeModal('mRecurring')">Cerrar</button>
     <button class="btn btn-primary" id="mRecurringSave" style="display:none" onclick="saveRecurring()">Guardar</button>
   </div>
 </div>
@@ -862,7 +862,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body" id="mCalDayBody" style="max-height:70vh;overflow-y:auto"></div>
   <div class="modal-foot">
-    <button class="btn btn-ghost" onclick="closeModal('mCalDay')">Cerrar</button>
+    <button class="btn btn-ghost" id="mCalDayClose" onclick="closeModal('mCalDay')">Cerrar</button>
   </div>
 </div>
 </div>
@@ -876,8 +876,8 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body" id="mBillBody"></div>
   <div class="modal-foot">
-    <button class="btn btn-ghost" onclick="closeModal('mBill')">Cancelar</button>
-    <button class="btn btn-primary" onclick="saveBill()">Guardar</button>
+    <button class="btn btn-ghost" id="mBillCancel" onclick="closeModal('mBill')">Cancelar</button>
+    <button class="btn btn-primary" id="mBillSave" onclick="saveBill()">Guardar</button>
   </div>
 </div>
 </div>
@@ -891,7 +891,7 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body" id="mCardSetupBody"></div>
   <div class="modal-foot">
-    <button class="btn btn-ghost" onclick="closeModal('mCardSetup')">Cancelar</button>
+    <button class="btn btn-ghost" id="mCardSetupCancel" onclick="closeModal('mCardSetup')">Cancelar</button>
     <button class="btn btn-primary" id="mCardSetupSave">Guardar</button>
   </div>
 </div>
@@ -1018,6 +1018,18 @@ const T = {
     all:'Todas',
     startingBalance:'Saldo Inicial',
     setStartBal:'Establecer saldo inicial',
+    preview:'👁️ Vista previa',
+    back:'← Atrás',
+    sendCode:'📨 Enviar código',
+    verify:'✅ Verificar',
+    resendCode:'🔁 Reenviar código',
+    signInDesc:'Ingresa tu correo y te enviaremos un código para iniciar sesión.',
+    cloud:'Nube',
+    payments2:'Pagos',
+    cards2:'Tarjetas',
+    accounts2:'Cuentas',
+    business2:'Negocio',
+    addTxTitle:'Agregar transacción',
   },
   en:{
     appName:'ContaFácil',
@@ -1100,6 +1112,18 @@ const T = {
     all:'All',
     startingBalance:'Starting Balance',
     setStartBal:'Set starting balance',
+    preview:'👁️ Preview',
+    back:'← Back',
+    sendCode:'📨 Send code',
+    verify:'✅ Verify',
+    resendCode:'🔁 Resend code',
+    signInDesc:'Enter your email and we\'ll send you a code to sign in.',
+    cloud:'Cloud',
+    payments2:'Payments',
+    cards2:'Cards',
+    accounts2:'Accounts',
+    business2:'Business',
+    addTxTitle:'Add transaction',
   }
 };
 
@@ -3108,6 +3132,7 @@ function updateLangUI(){
   document.documentElement.lang = state.lang;
   updateSyncBadge();
   updateCameraLabels();
+  updateStaticLabels();
 }
 
 // ═══════════════════════════════════════════════
@@ -4187,6 +4212,80 @@ function updateCameraLabels(){
   const tg = document.getElementById('totalGuideLine');
   if(tg) tg.setAttribute('data-label', es ? '← TOTAL →' : '← TOTAL →');
   el('totalGuideHint',   es ? 'Alinea el TOTAL con esta línea 🟠' : 'Align the TOTAL with this line 🟠');
+}
+
+function updateStaticLabels(){
+  const es = state.lang==='es';
+  const t  = T[state.lang];
+  const el = (id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
+  const ih = (id,html)=>{ const e=document.getElementById(id); if(e) e.innerHTML=html; };
+
+  // Mobile bottom nav
+  el('mbn-cal-lbl',    es?'Pagos':'Payments');
+  el('mbn-cards-lbl',  es?'Tarjetas':'Cards');
+  el('mbn-debit-lbl',  es?'Cuentas':'Accounts');
+  el('mbn-biz-lbl',    es?'Negocio':'Business');
+  el('mbn-cloud-lbl',  es?'Nube':'Cloud');
+
+  // FAB tooltip
+  const fab=document.getElementById('fabBtn');
+  if(fab) fab.title = es?'Agregar transacción':'Add transaction';
+
+  // Auth modal
+  el('authSendBtn',    es?'📨 Enviar código':'📨 Send code');
+  el('authVerifyBtn',  es?'✅ Verificar':'✅ Verify');
+  el('authBackBtn',    es?'← Atrás':'← Back');
+  el('authResendBtn',  es?'🔁 Reenviar código':'🔁 Resend code');
+  ih('authStep1Desc',  es
+    ? 'Ingresa tu correo y te enviaremos un código para iniciar sesión.<br><span style="font-size:11px;opacity:.7">Enter your email and we\'ll send you a code to sign in.</span>'
+    : 'Enter your email and we\'ll send you a code to sign in.<br><span style="font-size:11px;opacity:.7">Ingresa tu correo para recibir un código.</span>');
+
+  // Create page modal
+  el('lbl-pagename',      t.pageName);
+  el('btn-cancel-create', t.cancel);
+  el('btn-confirm-create',t.createPage);
+  el('lbl-credit-opt',    t.credit);
+  el('desc-credit-opt',   t.creditDesc);
+  el('lbl-debit-opt',     t.debit);
+  el('desc-debit-opt',    t.debitDesc);
+
+  // Transaction modal
+  el('btn-cancel-tx', t.cancel);
+  el('btn-save-tx',   t.save);
+
+  // Statement modal
+  el('btn-close-stat', t.close);
+
+  // Confirm delete modal
+  el('btn-no',  t.cancel);
+  el('btn-yes', es?'Eliminar':'Delete');
+
+  // Sync / OneDrive modal
+  el('mSyncClose', t.close);
+
+  // Recurring modal
+  el('mRecurringClose', t.close);
+  el('mRecurringSave',  t.save);
+
+  // Calendar day modal
+  el('mCalDayClose', t.close);
+
+  // Bill modal
+  el('mBillCancel', t.cancel);
+  el('mBillSave',   t.save);
+
+  // Card setup modal
+  el('mCardSetupCancel', t.cancel);
+  el('mCardSetupSave',   t.save);
+
+  // CSV import modal
+  el('csvCancelBtn',  t.cancel);
+  el('csvPreviewBtn', es?'👁️ Vista previa':'👁️ Preview');
+  el('csvBackBtn',    es?'← Atrás':'← Back');
+  ih('csvInstructions', es?'Pega el contenido CSV de tu banco aquí:':'Paste your bank\'s CSV content here:');
+
+  // Photo preview
+  el('photoCloseBtn', es?'✕ Cerrar':'✕ Close');
 }
 
 // ═══════════════════════════════════════════════
