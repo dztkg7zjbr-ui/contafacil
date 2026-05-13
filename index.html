@@ -561,21 +561,19 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
 
     <!-- SIGNED OUT: Step 2 — enter OTP -->
     <div class="auth-step" id="authStep2">
-      <p style="color:var(--gray-500);font-size:13px;margin-bottom:4px;line-height:1.6">
+      <p style="color:var(--gray-500);font-size:13px;margin-bottom:12px;line-height:1.6">
         Código enviado a <span class="auth-email-display" id="authEmailDisplay"></span>.<br>
-        <strong style="color:var(--gray-700)">Ingresa los 6 dígitos del correo aquí abajo.</strong>
+        <strong style="color:var(--gray-700)">Copia el código del correo y pégalo aquí.</strong>
         <span style="font-size:11px;display:block;margin-top:3px;color:var(--gray-400)">
-          (Ignora el botón de enlace en el correo — solo usa el código de 6 dígitos aquí.
-          / Ignore any link button in the email — just enter the 6-digit code here.)
+          Copy the code from the email and paste it below.
         </span>
       </p>
-      <div class="auth-otp-grid" id="otpGrid">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,0)" onkeydown="otpBack(event,this,0)">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,1)" onkeydown="otpBack(event,this,1)">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,2)" onkeydown="otpBack(event,this,2)">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,3)" onkeydown="otpBack(event,this,3)">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,4)" onkeydown="otpBack(event,this,4)">
-        <input type="tel" maxlength="1" inputmode="numeric" oninput="otpNext(this,5)" onkeydown="otpBack(event,this,5)">
+      <div class="fg" style="margin-bottom:16px">
+        <input type="text" id="otpSingle" class="fc"
+               style="font-size:22px;font-weight:700;letter-spacing:4px;text-align:center"
+               placeholder="Pegar código / Paste code"
+               autocomplete="one-time-code" inputmode="text" spellcheck="false"
+               onkeydown="if(event.key==='Enter')sbVerifyCode()">
       </div>
       <div style="display:flex;gap:8px">
         <button class="btn btn-ghost btn-sm" onclick="showAuthStep(1)" style="flex:0">← Atrás</button>
@@ -5352,7 +5350,7 @@ async function sbSendCode(resend=false){
     showAuthStep(2);
     clearAuthStatus();
     // Focus first OTP box
-    setTimeout(()=>{ const g=document.getElementById('otpGrid'); if(g) g.querySelector('input').focus(); }, 150);
+    setTimeout(()=>{ const inp=document.getElementById('otpSingle'); if(inp){ inp.value=''; inp.focus(); } }, 150);
     if(resend) setAuthStatus('✅ Código reenviado.', false);
   } catch(e){
     setAuthStatus('Error: ' + (e.message || 'No se pudo enviar el código.'));
@@ -5362,9 +5360,8 @@ async function sbSendCode(resend=false){
 }
 
 async function sbVerifyCode(){
-  const inputs = document.querySelectorAll('#otpGrid input');
-  const token  = Array.from(inputs).map(i=>i.value).join('').trim();
-  if(token.length !== 6){ setAuthStatus('Ingresa los 6 dígitos del código.'); return; }
+  const token = (document.getElementById('otpSingle')?.value||'').trim().replace(/\s/g,'');
+  if(!token){ setAuthStatus('Pega el código del correo. / Paste the code from the email.'); return; }
   const btn = document.getElementById('authVerifyBtn');
   if(btn){ btn.disabled=true; btn.textContent='⏳ Verificando...'; }
   try{
@@ -5446,22 +5443,9 @@ async function sbSignOut(){
 }
 
 // OTP input helpers — auto-advance and backspace
-function otpNext(el, idx){
-  el.value = el.value.replace(/\D/g,'').slice(-1);
-  if(el.value && idx < 5){
-    const inputs = document.querySelectorAll('#otpGrid input');
-    inputs[idx+1].focus();
-  }
-  // Auto-verify when all 6 filled
-  const inputs = document.querySelectorAll('#otpGrid input');
-  if(Array.from(inputs).every(i=>i.value)) sbVerifyCode();
-}
-function otpBack(e, el, idx){
-  if(e.key === 'Backspace' && !el.value && idx > 0){
-    const inputs = document.querySelectorAll('#otpGrid input');
-    inputs[idx-1].focus();
-  }
-}
+// otpNext / otpBack kept as stubs (grid replaced with single input)
+function otpNext(){}
+function otpBack(){}
 
 // ═══════════════════════════════════════════════
 // FEATURE: GLOBAL TRANSACTION SEARCH
