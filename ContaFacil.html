@@ -5535,37 +5535,60 @@ async function authSubmit(){
   const es = state.lang==='es';
   const email    = (document.getElementById('authEmailInput')?.value||'').trim();
   const password = document.getElementById('authPasswordInput')?.value||'';
-  if(!email||!email.includes('@')){ setAuthStatus(es?'Ingresa un correo válido.':'Enter a valid email.'); return; }
-  if(!password||password.length<6){ setAuthStatus(es?'La contraseña necesita al menos 6 caracteres.':'Password must be at least 6 characters.'); return; }
+  if(!email||!email.includes('@')){ toast(es?'Ingresa un correo válido.':'Enter a valid email.','warn'); return; }
+  if(!password||password.length<6){ toast(es?'La contraseña necesita al menos 6 caracteres.':'Password must be at least 6 characters.','warn'); return; }
   const btn = document.getElementById('authSubmitBtn');
   if(btn){ btn.disabled=true; btn.textContent='⏳ ...'; }
   try{
     if(_authMode==='signup'){
       const confirm = document.getElementById('authConfirmInput')?.value||'';
-      if(password!==confirm){ setAuthStatus(es?'Las contraseñas no coinciden.':'Passwords do not match.'); return; }
-      const {error} = await sb.auth.signUp({ email, password });
+      if(password!==confirm){
+        toast(es?'Las contraseñas no coinciden.':'Passwords do not match.','warn');
+        if(btn){ btn.disabled=false; setAuthMode('signup'); }
+        return;
+      }
+      const {data, error} = await sb.auth.signUp({ email, password });
       if(error) throw error;
-      // If email confirmation is disabled in Supabase, user is signed in immediately via onAuthStateChange.
-      // If enabled, show a message to check their email.
-      setAuthStatus('✅ ' + (es?'Cuenta creada. Si recibes un correo de confirmación, ábrelo primero.':'Account created. Check your email for a confirmation link if you get one.'), false);
+      // If email confirmation is disabled, user is immediately signed in — handle it now
+      if(data?.user && data?.session){
+        sbUser = data.user;
+        await sbPullOnLogin();
+        hideAuthWall();
+        renderAll();
+        updateAuthBadge();
+        updateSyncBadge();
+        toast('✅ '+(es?'¡Cuenta creada! Bienvenida.':'Account created! Welcome.'),'ok',3000);
+      } else {
+        // Email confirmation required
+        toast('📧 '+(es?'Revisa tu correo para confirmar la cuenta.':'Check your email to confirm your account.'),'ok',6000);
+        if(btn){ btn.disabled=false; setAuthMode('signin'); }
+      }
     } else {
-      const {error} = await sb.auth.signInWithPassword({ email, password });
+      const {data, error} = await sb.auth.signInWithPassword({ email, password });
       if(error) throw error;
-      // onAuthStateChange handles the rest (sync, modal update, toast)
+      // Handle directly — don't rely solely on onAuthStateChange
+      sbUser = data.user;
+      await sbPullOnLogin();
+      hideAuthWall();
+      renderAll();
+      updateAuthBadge();
+      updateSyncBadge();
+      toast('✅ '+(es?'¡Bienvenida!':'Welcome back!'),'ok',2500);
     }
   } catch(e){
     const msg = e.message||'';
+    let display = es?'Error desconocido.':'Unknown error.';
     if(msg.includes('Invalid login credentials')||msg.includes('invalid_credentials')){
-      setAuthStatus(es?'Correo o contraseña incorrectos.':'Incorrect email or password.');
+      display = es?'Correo o contraseña incorrectos.':'Incorrect email or password.';
     } else if(msg.includes('User already registered')){
-      setAuthStatus(es?'Este correo ya tiene cuenta. Inicia sesión.':'Account exists — sign in instead.');
+      display = es?'Este correo ya tiene cuenta. Inicia sesión.':'Account already exists — sign in instead.';
       setAuthMode('signin');
     } else if(msg.includes('Email not confirmed')){
-      setAuthStatus(es?'Confirma tu correo antes de entrar.':'Please confirm your email first.');
-    } else {
-      setAuthStatus((es?'Error: ':'Error: ')+(msg||'Unknown error'));
+      display = es?'Confirma tu correo primero.':'Please confirm your email first.';
+    } else if(msg){
+      display = msg;
     }
-  } finally {
+    toast('❌ '+display,'err',5000);
     if(btn){ btn.disabled=false; setAuthMode(_authMode); }
   }
 }
