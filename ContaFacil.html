@@ -538,16 +538,50 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
         <div style="color:var(--gray-400);font-size:14px">Cargando… / Loading…</div>
       </div>
       <div id="authWallPrompt" style="display:none">
-        <div style="font-size:52px;margin-bottom:12px">💰</div>
-        <div style="font-size:26px;font-weight:800;color:var(--primary);letter-spacing:-.5px;margin-bottom:6px">ContaFácil</div>
-        <div style="color:var(--gray-400);font-size:14px;margin-bottom:36px">Tu contabilidad personal</div>
-        <button class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;border-radius:10px" onclick="openAuthModal()">
-          Iniciar sesión / Sign in
-        </button>
-        <p style="font-size:12px;color:var(--gray-400);margin-top:14px;line-height:1.5">
-          ¿Primera vez? Crea una cuenta para empezar.<br>
-          <span style="opacity:.7">First time? Create an account to get started.</span>
-        </p>
+        <div style="font-size:44px;margin-bottom:8px">💰</div>
+        <div style="font-size:24px;font-weight:800;color:var(--primary);letter-spacing:-.5px;margin-bottom:20px">ContaFácil</div>
+
+        <!-- Inline login form — lives here so z-index never blocks it -->
+        <div style="background:var(--white);border-radius:14px;box-shadow:var(--shadow-lg);padding:24px;text-align:left">
+          <!-- Mode tabs -->
+          <div style="display:flex;background:var(--gray-100);border-radius:8px;padding:3px;margin-bottom:18px;gap:2px">
+            <button id="authModeSignInBtn" onclick="setAuthMode('signin')"
+              style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;background:var(--white);color:var(--primary);box-shadow:var(--shadow-sm);transition:all .2s">
+              Iniciar sesión
+            </button>
+            <button id="authModeSignUpBtn" onclick="setAuthMode('signup')"
+              style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--gray-500);transition:all .2s">
+              Crear cuenta
+            </button>
+          </div>
+          <div class="fg">
+            <label class="form-label">Correo / Email</label>
+            <input type="email" id="authEmailInput" class="form-control" placeholder="gloria@email.com"
+                   autocomplete="email" inputmode="email"
+                   onkeydown="if(event.key==='Enter')authSubmit()">
+          </div>
+          <div class="fg">
+            <label class="form-label">Contraseña / Password</label>
+            <input type="password" id="authPasswordInput" class="form-control" placeholder="••••••••"
+                   autocomplete="current-password"
+                   onkeydown="if(event.key==='Enter')authSubmit()">
+          </div>
+          <div class="fg" id="authConfirmWrap" style="display:none">
+            <label class="form-label">Confirmar / Confirm</label>
+            <input type="password" id="authConfirmInput" class="form-control" placeholder="••••••••"
+                   onkeydown="if(event.key==='Enter')authSubmit()">
+          </div>
+          <button class="btn btn-primary" style="width:100%;padding:11px;margin-top:4px" onclick="authSubmit()" id="authSubmitBtn">
+            Iniciar sesión
+          </button>
+          <div style="text-align:center;margin-top:10px">
+            <button class="btn btn-ghost btn-sm" id="authForgotBtn" onclick="sbForgotPassword()"
+              style="color:var(--gray-400);font-size:12px">
+              ¿Olvidaste tu contraseña? / Forgot password?
+            </button>
+          </div>
+          <div id="authStatus" style="margin-top:10px;font-size:12px;text-align:center;color:var(--danger);display:none"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -565,51 +599,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body">
 
-    <!-- SIGNED OUT: Login / Create Account -->
-    <div class="auth-step active" id="authStep1">
-      <!-- Mode toggle -->
-      <div style="display:flex;background:var(--gray-100);border-radius:8px;padding:3px;margin-bottom:18px;gap:2px">
-        <button id="authModeSignInBtn" onclick="setAuthMode('signin')"
-          style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;background:var(--white);color:var(--primary);box-shadow:var(--shadow-sm);transition:all .2s">
-          Iniciar sesión
-        </button>
-        <button id="authModeSignUpBtn" onclick="setAuthMode('signup')"
-          style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--gray-500);transition:all .2s">
-          Crear cuenta
-        </button>
-      </div>
-
-      <div class="fg">
-        <label class="form-label">Correo / Email</label>
-        <input type="email" id="authEmailInput" class="form-control" placeholder="gloria@email.com"
-               autocomplete="email" inputmode="email"
-               onkeydown="if(event.key==='Enter')authSubmit()">
-      </div>
-      <div class="fg">
-        <label class="form-label">Contraseña / Password</label>
-        <input type="password" id="authPasswordInput" class="form-control" placeholder="••••••••"
-               autocomplete="current-password"
-               onkeydown="if(event.key==='Enter')authSubmit()">
-      </div>
-      <div class="fg" id="authConfirmWrap" style="display:none">
-        <label class="form-label">Confirmar contraseña / Confirm</label>
-        <input type="password" id="authConfirmInput" class="form-control" placeholder="••••••••"
-               onkeydown="if(event.key==='Enter')authSubmit()">
-      </div>
-
-      <button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="authSubmit()" id="authSubmitBtn">
-        Iniciar sesión
-      </button>
-      <div style="text-align:center;margin-top:10px">
-        <button class="btn btn-ghost btn-sm" id="authForgotBtn" onclick="sbForgotPassword()"
-          style="color:var(--gray-400);font-size:12px">
-          ¿Olvidaste tu contraseña? / Forgot password?
-        </button>
-      </div>
-    </div>
-
-    <!-- step2 kept as empty placeholder so showAuthStep(2) doesn't break -->
-    <div class="auth-step" id="authStep2"></div>
+    <!-- Login form lives in the auth wall (z-index safe). Modal only shows signed-in view. -->
+    <div class="auth-step" id="authStep1" style="display:none"></div>
+    <div class="auth-step" id="authStep2" style="display:none"></div>
 
     <!-- SIGNED IN -->
     <div class="auth-step" id="authStep3">
@@ -642,7 +634,6 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     </div>
 
     <!-- ERROR / STATUS -->
-    <div id="authStatus" style="margin-top:12px;font-size:12px;text-align:center;color:var(--danger);display:none"></div>
   </div>
 </div>
 </div>
@@ -5462,9 +5453,9 @@ function openAuthModal(){
       document.getElementById('authLastSync').textContent = '';
     }
   } else {
-    showAuthStep(1);
-    setAuthMode(_authMode);
-    setTimeout(()=>{ const e=document.getElementById('authEmailInput'); if(e) e.focus(); }, 150);
+    // Not signed in — form is in the auth wall, not the modal. Just close.
+    closeModal('mAuth');
+    return;
   }
   clearAuthStatus();
 }
