@@ -5395,16 +5395,22 @@ function sbInit(){
     sbUser = session?.user || null;
     updateAuthBadge();
 
-    if(event === 'SIGNED_IN'){
-      // Clear the auth tokens from the URL bar so they don't look like "API keys"
+    if(event === 'INITIAL_SESSION'){
+      // App reopened — session restored from localStorage, no password needed
+      if(sbUser){
+        await sbPull(false);
+        hideAuthWall();
+      } else {
+        showAuthWall(false); // no saved session — show sign-in
+      }
+    } else if(event === 'SIGNED_IN'){
       if(window.location.hash && window.location.hash.includes('access_token')){
         history.replaceState(null, '', window.location.pathname + window.location.search);
       }
-      // Only show the toast + pull when this is a fresh sign-in (not a token refresh on reload)
       if(wasSignedOut){
         const es = state.lang === 'es';
         closeModal('mAuth');
-        await sbPullOnLogin();   // pull cloud data — never push local
+        await sbPullOnLogin();
         hideAuthWall();
         renderAll();
         updateAuthBadge();
@@ -5412,21 +5418,24 @@ function sbInit(){
         toast('✅ ' + (es ? '¡Bienvenida!' : 'Welcome back!'), 'ok', 3000);
       }
     } else if(event === 'TOKEN_REFRESHED'){
-      // Silent background refresh — just keep data in sync
       if(sbUser) await sbPull(false);
+    } else if(event === 'SIGNED_OUT'){
+      showAuthWall(false);
     }
   });
 
-  // Restore existing session from localStorage (instant, no network)
+  // Fallback: getSession() fires if onAuthStateChange doesn't (older SDK versions)
   sb.auth.getSession().then(({data:{session}}) => {
-    sbUser = session?.user || null;
-    updateAuthBadge();
-    if(sbUser){
-      // Existing session — pull cloud data and show app
-      sbPull(false).then(()=>{ hideAuthWall(); renderAll(); });
-    } else {
-      // No session — show sign-in prompt
-      showAuthWall(false);
+    // INITIAL_SESSION event already handles this — only act if sbUser still isn't set
+    if(!sbUser){
+      sbUser = session?.user || null;
+      updateAuthBadge();
+      if(sbUser){
+        sbPull(false);
+        hideAuthWall();
+      } else {
+        showAuthWall(false);
+      }
     }
   });
 }
