@@ -483,6 +483,10 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   .fab-menu{bottom:132px;}
   .toast-wrap{bottom:74px;}
 }
+/* ── AUTH WALL ── */
+#authWall{position:fixed;inset:0;background:var(--gray-50);z-index:2000;display:flex;align-items:center;justify-content:center;padding:32px;text-align:center;}
+[data-theme="dark"] #authWall{background:#0f172a;}
+#authWallInner{width:100%;max-width:340px;}
 </style>
 </head>
 <body>
@@ -526,13 +530,34 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     <button class="mbn-btn" id="mbn-biz" onclick="switchTab('business')"><span class="mbn-icon">🏢</span><span id="mbn-biz-lbl">Negocio</span></button>
     <button class="mbn-btn" id="mbn-cloud" onclick="openAuthModal()"><span class="mbn-icon">☁️</span><span id="mbn-cloud-lbl">Nube</span></button>
   </nav>
+  <!-- AUTH WALL: full-screen lock — shown until signed in -->
+  <div id="authWall">
+    <div id="authWallInner">
+      <div id="authWallLoading">
+        <div class="spinner" style="width:28px;height:28px;border-width:3px;border-color:rgba(37,99,235,.2);border-top-color:var(--primary);margin:0 auto 16px"></div>
+        <div style="color:var(--gray-400);font-size:14px">Cargando… / Loading…</div>
+      </div>
+      <div id="authWallPrompt" style="display:none">
+        <div style="font-size:52px;margin-bottom:12px">💰</div>
+        <div style="font-size:26px;font-weight:800;color:var(--primary);letter-spacing:-.5px;margin-bottom:6px">ContaFácil</div>
+        <div style="color:var(--gray-400);font-size:14px;margin-bottom:36px">Tu contabilidad personal</div>
+        <button class="btn btn-primary" style="width:100%;padding:14px;font-size:16px;border-radius:10px" onclick="openAuthModal()">
+          Iniciar sesión / Sign in
+        </button>
+        <p style="font-size:12px;color:var(--gray-400);margin-top:14px;line-height:1.5">
+          ¿Primera vez? Crea una cuenta para empezar.<br>
+          <span style="opacity:.7">First time? Create an account to get started.</span>
+        </p>
+      </div>
+    </div>
+  </div>
   <div class="fab-overlay" id="fabOverlay" onclick="closeFab()"></div>
   <div class="fab-menu" id="fabMenu" style="display:none"></div>
   <button class="fab" id="fabBtn" onclick="toggleFab()" title="Agregar transacción">＋</button>
 </div>
 
 <!-- MODAL: Cloud Auth -->
-<div class="overlay" id="mAuth" onclick="if(event.target===this)closeModal('mAuth')">
+<div class="overlay" id="mAuth" onclick="if(event.target===this && sbUser)closeModal('mAuth')">
 <div class="modal" style="max-width:380px">
   <div class="modal-header">
     <span id="authModalTitle">☁️ Sincronización en la nube</span>
@@ -5372,10 +5397,13 @@ function sbInit(){
       // Only show the toast + pull when this is a fresh sign-in (not a token refresh on reload)
       if(wasSignedOut){
         const es = state.lang === 'es';
-        toast('✅ ' + (es ? '¡Sesión iniciada! Sincronizando…' : 'Signed in! Syncing…'), 'ok', 3500);
         closeModal('mAuth');
-        await sbPullOrPushNew();
+        await sbPullOnLogin();   // pull cloud data — never push local
+        hideAuthWall();
+        renderAll();
         updateAuthBadge();
+        updateSyncBadge();
+        toast('✅ ' + (es ? '¡Bienvenida!' : 'Welcome back!'), 'ok', 3000);
       }
     } else if(event === 'TOKEN_REFRESHED'){
       // Silent background refresh — just keep data in sync
@@ -5387,10 +5415,28 @@ function sbInit(){
   sb.auth.getSession().then(({data:{session}}) => {
     sbUser = session?.user || null;
     updateAuthBadge();
-    if(sbUser) sbPull(false);
+    if(sbUser){
+      // Existing session — pull cloud data and show app
+      sbPull(false).then(()=>{ hideAuthWall(); renderAll(); });
+    } else {
+      // No session — show sign-in prompt
+      showAuthWall(false);
+    }
   });
 }
 
+function showAuthWall(loading=false){
+  const wall = document.getElementById('authWall');
+  if(wall) wall.style.display = 'flex';
+  const loadEl   = document.getElementById('authWallLoading');
+  const promptEl = document.getElementById('authWallPrompt');
+  if(loadEl)   loadEl.style.display   = loading ? 'block' : 'none';
+  if(promptEl) promptEl.style.display = loading ? 'none'  : 'block';
+}
+function hideAuthWall(){
+  const wall = document.getElementById('authWall');
+  if(wall) wall.style.display = 'none';
+}
 function updateAuthBadge(){
   const dot = document.getElementById('authDot');
   if(!dot) return;
@@ -5532,8 +5578,11 @@ async function sbVerifyCode(){
     sbUser = data.user;
     updateAuthBadge();
     clearAuthStatus();
-    // Pull from cloud; if no cloud data, push local state up
-    await sbPullOrPushNew();
+    // Pull from cloud — never push local data on login
+    await sbPullOnLogin();
+    hideAuthWall();
+    renderAll();
+    updateSyncBadge();
     openAuthModal(); // re-render to step 3
   } catch(e){
     setAuthStatus('Código incorrecto o expirado. Intenta de nuevo.');
@@ -5542,23 +5591,33 @@ async function sbVerifyCode(){
   }
 }
 
-// On first login: if cloud has data → pull it; otherwise push local data up
-async function sbPullOrPushNew(){
+// On login: ALWAYS pull from cloud. Never push local data. If cloud is empty → start fresh.
+async function sbPullOnLogin(){
+  const es = state.lang==='es';
   try{
     const {data} = await sb.from('user_data').select('state_json').eq('user_id', sbUser.id).maybeSingle();
     if(data?.state_json && Object.keys(data.state_json).length > 0){
+      // Cloud has data — replace local state entirely
+      const lang = state.lang;
       Object.assign(state, data.state_json);
+      if(!state.lang) state.lang = lang;
+      if(!state.pages) state.pages = [];
+      if(!state.bills) state.bills = [];
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
-      renderAll();
-      updateSyncBadge();
       sbLastSync = new Date();
-      toast('☁️ ' + (state.lang==='es' ? 'Datos cargados desde la nube' : 'Data loaded from cloud'), 'ok', 3500);
     } else {
-      // No cloud data — push local state up so it's saved
-      await sbPush(false);
-      toast('☁️ ' + (state.lang==='es' ? 'Datos guardados en la nube' : 'Data saved to cloud'), 'ok', 3500);
+      // New account — start completely fresh, ignore any local data
+      const lang = state.lang;
+      state.pages = [];
+      state.bills = [];
+      state.budgets = {};
+      state.netWorthHistory = [];
+      state.activeTab = 'master';
+      state.lastRecurringCheck = '';
+      state.lang = lang;
+      try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
     }
-  } catch(e){ /* silent */ }
+  } catch(e){ /* silent — app still works offline */ }
 }
 
 async function sbPush(showToast=false){
@@ -5587,6 +5646,8 @@ async function sbPull(showToast=false){
       renderAll();
       updateSyncBadge();
       sbLastSync = new Date();
+      processRecurringTransactions();
+      takeNetWorthSnapshot();
       if(showToast) toast('☁️ ' + (state.lang==='es' ? 'Datos cargados desde la nube' : 'Data loaded from cloud'), 'ok', 3000);
     }
   } catch(e){
@@ -5596,15 +5657,24 @@ async function sbPull(showToast=false){
 
 async function sbSignOut(){
   if(!sb) return;
-  // Clear local state immediately — sign-out must always work even if offline
+  // 1. Wipe ALL local state immediately (don't wait for network)
+  const lang = state.lang;
+  state.pages = [];
+  state.bills = [];
+  state.budgets = {};
+  state.netWorthHistory = [];
+  state.activeTab = 'master';
+  state.lastRecurringCheck = '';
+  state.lang = lang;
+  try{ localStorage.removeItem(STORAGE_KEY); }catch(e){}
   sbUser = null;
   sbLastSync = null;
   updateAuthBadge();
   updateSyncBadge();
   closeModal('mAuth');
-  toast('👋 ' + (state.lang==='es' ? 'Sesión cerrada' : 'Signed out'), 'ok', 2000);
-  // Tell the server in the background (non-blocking, failure is fine)
-  try{ await sb.auth.signOut(); } catch(e){}
+  showAuthWall(false);  // show sign-in prompt
+  // 2. Tell the server (non-blocking, failure is fine)
+  try{ await sb.auth.signOut(); }catch(e){}
 }
 
 // OTP input helpers — auto-advance and backspace
@@ -6188,48 +6258,43 @@ function openPhotoPreview(txId){
 // ═══════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════
-load();                                  // sync: localStorage (instant)
-if(!state.activeTab) state.activeTab='master';
-if(!state.bills) state.bills=[];
-if(!state.lastRecurringCheck) state.lastRecurringCheck='';
-if(!state.budgets) state.budgets={};
-if(!state.netWorthHistory) state.netWorthHistory=[];
-renderAll();
+// Apply theme immediately (no auth needed)
 applyTheme();
 showSearch();
-updateSyncBadge();
-initFileSync();                          // async: restore main auto-save handle
-initBackupSync();                        // async: restore hard-backup handle
-processRecurringTransactions();          // auto-create any recurring tx due today
-takeNetWorthSnapshot();                  // monthly net worth snapshot (once per month)
-sbInit();                                // async: restore Supabase session + cloud sync
-initBillNotifications();                 // fire bill-due notifications if permission already granted
 
-// ── Periodic writes ──
-// Main file: every 3 min (belt-and-suspenders on top of the per-save trigger)
-// Backup file: every 30 min — intentionally lagged so it survives a bad import
+// Show auth wall with loading spinner while we check session
+showAuthWall(true);
+
+// Wire up file sync silently in background (no-op if no file handle)
+initFileSync();
+initBackupSync();
+
+// Init Supabase — this will either hide the auth wall (if session exists)
+// or show the sign-in prompt (if no session). It will also load all data.
+sbInit();
+
+// Bill notifications (no-op if permission not granted)
+initBillNotifications();
+
+// Periodic file writes (belt-and-suspenders backup)
 setInterval(()=>{
   triggerFileSync();
   _triggerBackup(false);
 }, 3 * 60 * 1000);
 
-// ── Cross-device sync: pull from cloud whenever the app comes back into focus ──
-// This ensures that if Mom adds a transaction on the laptop, the phone picks it
-// up the next time she opens the app — without needing to sign in again.
+// Cross-device sync: pull from cloud when app comes back into focus
 document.addEventListener('visibilitychange', function(){
   if(document.visibilityState==='visible' && sb && sbUser){
     sbPull(false);
   }
 });
-
-// Also pull every 5 minutes while the app is open (catches background changes)
 setInterval(function(){
   if(sb && sbUser && document.visibilityState==='visible'){
     sbPull(false);
   }
 }, 5 * 60 * 1000);
 
-// Register service worker (enables offline use + proper home-screen install)
+// Register service worker
 if('serviceWorker' in navigator){
   navigator.serviceWorker.register('./sw.js').catch(()=>{});
 }
