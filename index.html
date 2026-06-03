@@ -5351,7 +5351,11 @@ function sbInit(){
   // With implicit flow the magic link redirects with #access_token=... in the URL hash,
   // which the SDK picks up automatically regardless of which browser opens the link.
   sb = supabase.createClient(SB_URL, SB_KEY, {
-    auth: { flowType: 'implicit' }
+    auth: {
+      persistSession: true,       // keep session in localStorage across app opens
+      autoRefreshToken: true,     // silently refresh every hour so she never gets logged out
+      detectSessionInUrl: true,   // picks up password-reset links
+    }
   });
 
   // Watch auth state changes (handles magic-link callbacks, token refresh, sign-out)
