@@ -5533,6 +5533,11 @@ function setAuthMode(mode){
 
 async function authSubmit(){
   const es = state.lang==='es';
+  // Guard: Supabase client must be ready
+  if(!sb){
+    toast(es?'Error de conexión. Recarga la página.':'Connection error. Reload the page.','err',5000);
+    return;
+  }
   const email    = (document.getElementById('authEmailInput')?.value||'').trim();
   const password = document.getElementById('authPasswordInput')?.value||'';
   if(!email||!email.includes('@')){ toast(es?'Ingresa un correo válido.':'Enter a valid email.','warn'); return; }
@@ -5564,9 +5569,13 @@ async function authSubmit(){
         if(btn){ btn.disabled=false; setAuthMode('signin'); }
       }
     } else {
-      const {data, error} = await sb.auth.signInWithPassword({ email, password });
+      // Race signInWithPassword against a 10-second timeout
+      const timeoutPromise = new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),10000));
+      const {data, error} = await Promise.race([
+        sb.auth.signInWithPassword({ email, password }),
+        timeoutPromise
+      ]);
       if(error) throw error;
-      // Handle directly — don't rely solely on onAuthStateChange
       sbUser = data.user;
       await sbPullOnLogin();
       hideAuthWall();
@@ -5577,18 +5586,20 @@ async function authSubmit(){
     }
   } catch(e){
     const msg = e.message||'';
-    let display = es?'Error desconocido.':'Unknown error.';
-    if(msg.includes('Invalid login credentials')||msg.includes('invalid_credentials')){
+    let display;
+    if(msg==='timeout'){
+      display = es?'Sin respuesta del servidor. Verifica tu conexión.':'No response from server. Check your connection.';
+    } else if(msg.includes('Invalid login credentials')||msg.includes('invalid_credentials')){
       display = es?'Correo o contraseña incorrectos.':'Incorrect email or password.';
     } else if(msg.includes('User already registered')){
       display = es?'Este correo ya tiene cuenta. Inicia sesión.':'Account already exists — sign in instead.';
       setAuthMode('signin');
     } else if(msg.includes('Email not confirmed')){
       display = es?'Confirma tu correo primero.':'Please confirm your email first.';
-    } else if(msg){
-      display = msg;
+    } else {
+      display = msg || (es?'Error desconocido.':'Unknown error.');
     }
-    toast('❌ '+display,'err',5000);
+    toast('❌ '+display,'err',6000);
     if(btn){ btn.disabled=false; setAuthMode(_authMode); }
   }
 }
