@@ -499,9 +499,9 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
       <button class="hnav-btn" id="darkModeBtn" onclick="toggleDark()" title="Modo oscuro / Dark mode">🌙</button>
     </div>
     <div class="header-spacer"></div>
-    <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Exportar / Importar datos">
-      <div class="sync-dot connected" id="syncDot"></div>
-      <span id="syncLabel">💾 0 mov.</span>
+    <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Cloud sync">
+      <div class="sync-dot off" id="syncDot"></div>
+      <span id="syncLabel">☁️ Sign in</span>
     </div>
     <div class="lang-toggle">
       <button class="lang-btn active" id="btn-es" onclick="setLang('es')">ES</button>
@@ -3804,11 +3804,7 @@ function importData(silent){
 // If main file needs re-auth → jump straight there (saves a tap).
 // Otherwise open the modal (backup re-auth is handled inside the modal).
 function syncBadgeClick(){
-  if(syncState === 'pending' && syncFileHandle){
-    requestSyncPermission();
-  } else {
-    openSyncModal();
-  }
+  openAuthModal();
 }
 
 function updateSyncBadge(){
@@ -3817,18 +3813,12 @@ function updateSyncBadge(){
   if(!dot||!lbl) return;
   const es = state.lang==='es';
   const n  = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
-  if(syncState==='connected'){
+  if(sbUser){
     dot.className='sync-dot connected';
     lbl.textContent = '☁️ '+(es ? n+' mov.' : n+' txn');
-  } else if(syncState==='pending'){
-    dot.className='sync-dot error';
-    lbl.textContent = es ? '⚠️ Reconectar' : '⚠️ Reconnect';
-  } else if(syncState==='error'){
-    dot.className='sync-dot error';
-    lbl.textContent = es ? '❌ Sync error' : '❌ Sync error';
   } else {
     dot.className='sync-dot off';
-    lbl.textContent = '💾 '+(es ? n+' mov.' : n+' txn');
+    lbl.textContent = es ? '☁️ Conectar' : '☁️ Sign in';
   }
 }
 
@@ -6161,6 +6151,22 @@ setInterval(()=>{
   triggerFileSync();
   _triggerBackup(false);
 }, 3 * 60 * 1000);
+
+// ── Cross-device sync: pull from cloud whenever the app comes back into focus ──
+// This ensures that if Mom adds a transaction on the laptop, the phone picks it
+// up the next time she opens the app — without needing to sign in again.
+document.addEventListener('visibilitychange', function(){
+  if(document.visibilityState==='visible' && sb && sbUser){
+    sbPull(false);
+  }
+});
+
+// Also pull every 5 minutes while the app is open (catches background changes)
+setInterval(function(){
+  if(sb && sbUser && document.visibilityState==='visible'){
+    sbPull(false);
+  }
+}, 5 * 60 * 1000);
 
 // Register service worker (enables offline use + proper home-screen install)
 if('serviceWorker' in navigator){
