@@ -5377,9 +5377,10 @@ function sbInit(){
   // which the SDK picks up automatically regardless of which browser opens the link.
   sb = supabase.createClient(SB_URL, SB_KEY, {
     auth: {
-      persistSession: true,       // keep session in localStorage across app opens
-      autoRefreshToken: true,     // silently refresh every hour so she never gets logged out
-      detectSessionInUrl: true,   // picks up password-reset links
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+      flowType: 'implicit',       // required for static GitHub Pages host
     }
   });
 
@@ -5640,17 +5641,25 @@ async function sbPull(showToast=false){
   try{
     const {data, error} = await sb.from('user_data').select('state_json,updated_at').eq('user_id', sbUser.id).maybeSingle();
     if(error) throw error;
-    if(data?.state_json){
+    if(data?.state_json && Object.keys(data.state_json).length > 0){
       Object.assign(state, data.state_json);
+      if(!state.pages) state.pages = [];
+      if(!state.bills) state.bills = [];
+      if(!state.budgets) state.budgets = {};
+      if(!state.netWorthHistory) state.netWorthHistory = [];
       try{ localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }catch(e){}
-      renderAll();
-      updateSyncBadge();
       sbLastSync = new Date();
-      processRecurringTransactions();
-      takeNetWorthSnapshot();
       if(showToast) toast('☁️ ' + (state.lang==='es' ? 'Datos cargados desde la nube' : 'Data loaded from cloud'), 'ok', 3000);
     }
+    // Always render after pull (whether data found or not)
+    renderAll();
+    updateSyncBadge();
+    processRecurringTransactions();
+    takeNetWorthSnapshot();
   } catch(e){
+    // Even on error, still render the app so the user isn't stuck
+    renderAll();
+    updateSyncBadge();
     if(showToast) toast('⚠️ ' + (state.lang==='es' ? 'Error al cargar desde la nube' : 'Cloud load failed'), 'error', 3000);
   }
 }
@@ -6272,6 +6281,15 @@ initBackupSync();
 // Init Supabase — this will either hide the auth wall (if session exists)
 // or show the sign-in prompt (if no session). It will also load all data.
 sbInit();
+
+// Safety net: if the spinner is still showing after 6s (session check hung),
+// drop to the sign-in screen so the user is never stuck loading forever.
+setTimeout(function(){
+  const loadEl = document.getElementById('authWallLoading');
+  if(loadEl && loadEl.style.display !== 'none'){
+    showAuthWall(false);
+  }
+}, 6000);
 
 // Bill notifications (no-op if permission not granted)
 initBillNotifications();
