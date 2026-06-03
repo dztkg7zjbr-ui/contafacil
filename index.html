@@ -540,51 +540,51 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body">
 
-    <!-- SIGNED OUT: Step 1 — enter email -->
+    <!-- SIGNED OUT: Login / Create Account -->
     <div class="auth-step active" id="authStep1">
-      <p id="authStep1Desc" style="color:var(--gray-500);font-size:13px;margin-bottom:16px;line-height:1.6">
-        Ingresa tu correo y te enviaremos un código para iniciar sesión.<br>
-        <span style="font-size:11px;opacity:.7">Enter your email and we'll send you a code to sign in.</span>
-      </p>
-      <div class="form-group">
-        <label class="form-label">Correo / Email</label>
-        <input type="email" id="authEmail" class="form-control" placeholder="gloria@ejemplo.com"
-               autocomplete="email" inputmode="email"
-               onkeydown="if(event.key==='Enter')sbSendCode()">
+      <!-- Mode toggle -->
+      <div style="display:flex;background:var(--gray-100);border-radius:8px;padding:3px;margin-bottom:18px;gap:2px">
+        <button id="authModeSignInBtn" onclick="setAuthMode('signin')"
+          style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:700;cursor:pointer;background:var(--white);color:var(--primary);box-shadow:var(--shadow-sm);transition:all .2s">
+          Iniciar sesión
+        </button>
+        <button id="authModeSignUpBtn" onclick="setAuthMode('signup')"
+          style="flex:1;padding:7px;border:none;border-radius:6px;font-size:13px;font-weight:600;cursor:pointer;background:transparent;color:var(--gray-500);transition:all .2s">
+          Crear cuenta
+        </button>
       </div>
-      <div style="display:flex;gap:8px;margin-top:4px">
-        <button class="btn btn-primary" style="flex:1" onclick="sbSendCode()" id="authSendBtn">
-          📨 Enviar código
+
+      <div class="fg">
+        <label class="form-label">Correo / Email</label>
+        <input type="email" id="authEmailInput" class="form-control" placeholder="gloria@email.com"
+               autocomplete="email" inputmode="email"
+               onkeydown="if(event.key==='Enter')authSubmit()">
+      </div>
+      <div class="fg">
+        <label class="form-label">Contraseña / Password</label>
+        <input type="password" id="authPasswordInput" class="form-control" placeholder="••••••••"
+               autocomplete="current-password"
+               onkeydown="if(event.key==='Enter')authSubmit()">
+      </div>
+      <div class="fg" id="authConfirmWrap" style="display:none">
+        <label class="form-label">Confirmar contraseña / Confirm</label>
+        <input type="password" id="authConfirmInput" class="form-control" placeholder="••••••••"
+               onkeydown="if(event.key==='Enter')authSubmit()">
+      </div>
+
+      <button class="btn btn-primary" style="width:100%;margin-top:4px" onclick="authSubmit()" id="authSubmitBtn">
+        Iniciar sesión
+      </button>
+      <div style="text-align:center;margin-top:10px">
+        <button class="btn btn-ghost btn-sm" id="authForgotBtn" onclick="sbForgotPassword()"
+          style="color:var(--gray-400);font-size:12px">
+          ¿Olvidaste tu contraseña? / Forgot password?
         </button>
       </div>
     </div>
 
-    <!-- SIGNED OUT: Step 2 — enter OTP -->
-    <div class="auth-step" id="authStep2">
-      <p style="color:var(--gray-500);font-size:13px;margin-bottom:12px;line-height:1.6">
-        Código enviado a <span class="auth-email-display" id="authEmailDisplay"></span>.<br>
-        <strong style="color:var(--gray-700)">Copia el código del correo y pégalo aquí.</strong>
-        <span style="font-size:11px;display:block;margin-top:3px;color:var(--gray-400)">
-          Copy the code from the email and paste it below.
-        </span>
-      </p>
-      <div class="fg" style="margin-bottom:16px">
-        <input type="text" id="otpSingle" class="fc"
-               style="font-size:22px;font-weight:700;letter-spacing:4px;text-align:center"
-               placeholder="Pegar código / Paste code"
-               autocomplete="one-time-code" inputmode="text" spellcheck="false"
-               onkeydown="if(event.key==='Enter')sbVerifyCode()">
-      </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn btn-ghost btn-sm" id="authBackBtn" onclick="showAuthStep(1)" style="flex:0">← Atrás</button>
-        <button class="btn btn-primary" style="flex:1" onclick="sbVerifyCode()" id="authVerifyBtn">
-          ✅ Verificar
-        </button>
-      </div>
-      <div style="margin-top:10px;text-align:center">
-        <button class="btn btn-ghost btn-sm" id="authResendBtn" onclick="sbSendCode(true)">🔁 Reenviar código</button>
-      </div>
-    </div>
+    <!-- step2 kept as empty placeholder so showAuthStep(2) doesn't break -->
+    <div class="auth-step" id="authStep2"></div>
 
     <!-- SIGNED IN -->
     <div class="auth-step" id="authStep3">
@@ -1138,7 +1138,7 @@ let sb        = null;   // supabase client instance
 let sbUser    = null;   // current auth user
 let sbPushTimer = null; // debounce handle for cloud push
 let sbLastSync  = null; // Date of last successful push/pull
-let _sbEmail    = '';   // email being verified (OTP flow)
+let _sbPhone    = '';   // phone being verified (SMS OTP flow)
 
 // Dark mode
 function toggleDark(){
@@ -4227,8 +4227,8 @@ function updateStaticLabels(){
   el('authBackBtn',    es?'← Atrás':'← Back');
   el('authResendBtn',  es?'🔁 Reenviar código':'🔁 Resend code');
   ih('authStep1Desc',  es
-    ? 'Ingresa tu correo y te enviaremos un código para iniciar sesión.<br><span style="font-size:11px;opacity:.7">Enter your email and we\'ll send you a code to sign in.</span>'
-    : 'Enter your email and we\'ll send you a code to sign in.<br><span style="font-size:11px;opacity:.7">Ingresa tu correo para recibir un código.</span>');
+    ? 'Ingresa tu número y te enviaremos un código por SMS.<br><span style="font-size:11px;opacity:.7">Enter your phone number and we\'ll text you a code.</span>'
+    : 'Enter your phone number and we\'ll text you a code.<br><span style="font-size:11px;opacity:.7">Ingresa tu número para recibir un código por SMS.</span>');
 
   // Create page modal
   el('lbl-pagename',      t.pageName);
@@ -5400,7 +5400,7 @@ function openAuthModal(){
   document.getElementById('authModalTitle').textContent = es ? '☁️ Sincronización en la nube' : '☁️ Cloud Sync';
   if(sbUser){
     showAuthStep(3);
-    document.getElementById('authUserEmail').textContent = sbUser.email || '';
+    document.getElementById('authUserEmail').textContent = sbUser.email || sbUser.phone || '';
     document.getElementById('authSignedInMsg').textContent = es ? '✅ Sesión activa' : '✅ Signed in';
     if(sbLastSync){
       const d = sbLastSync;
@@ -5412,7 +5412,8 @@ function openAuthModal(){
     }
   } else {
     showAuthStep(1);
-    setTimeout(()=>{ const e=document.getElementById('authEmail'); if(e) e.focus(); }, 150);
+    setAuthMode(_authMode);
+    setTimeout(()=>{ const e=document.getElementById('authEmailInput'); if(e) e.focus(); }, 150);
   }
   clearAuthStatus();
 }
@@ -5433,43 +5434,96 @@ function setAuthStatus(msg, isError=true){
 }
 function clearAuthStatus(){ setAuthStatus(''); }
 
-async function sbSendCode(resend=false){
-  const emailEl = document.getElementById('authEmail');
-  const email = resend ? _sbEmail : (emailEl ? emailEl.value.trim() : '');
-  if(!email || !email.includes('@')){ setAuthStatus('Por favor ingresa un correo válido.'); return; }
-  _sbEmail = email;
-  const btn = document.getElementById('authSendBtn');
-  if(btn){ btn.disabled = true; btn.textContent = '⏳ Enviando...'; }
+// ── Auth mode: 'signin' | 'signup' ──
+let _authMode = 'signin';
+function setAuthMode(mode){
+  _authMode = mode;
+  const es = state.lang==='es';
+  const isUp = mode==='signup';
+  const confirmWrap = document.getElementById('authConfirmWrap');
+  const forgotBtn   = document.getElementById('authForgotBtn');
+  const submitBtn   = document.getElementById('authSubmitBtn');
+  const signInBtn   = document.getElementById('authModeSignInBtn');
+  const signUpBtn   = document.getElementById('authModeSignUpBtn');
+  if(confirmWrap) confirmWrap.style.display = isUp ? 'block' : 'none';
+  if(forgotBtn)   forgotBtn.style.display   = isUp ? 'none'  : '';
+  if(submitBtn)   submitBtn.textContent = isUp
+    ? (es?'Crear cuenta':'Create account')
+    : (es?'Iniciar sesión':'Sign in');
+  if(signInBtn){
+    signInBtn.style.background   = !isUp ? 'var(--white)' : 'transparent';
+    signInBtn.style.color        = !isUp ? 'var(--primary)' : 'var(--gray-500)';
+    signInBtn.style.fontWeight   = !isUp ? '700' : '600';
+    signInBtn.style.boxShadow    = !isUp ? 'var(--shadow-sm)' : 'none';
+  }
+  if(signUpBtn){
+    signUpBtn.style.background   = isUp ? 'var(--white)' : 'transparent';
+    signUpBtn.style.color        = isUp ? 'var(--primary)' : 'var(--gray-500)';
+    signUpBtn.style.fontWeight   = isUp ? '700' : '600';
+    signUpBtn.style.boxShadow    = isUp ? 'var(--shadow-sm)' : 'none';
+  }
+  const pwdInput = document.getElementById('authPasswordInput');
+  if(pwdInput) pwdInput.autocomplete = isUp ? 'new-password' : 'current-password';
+}
+
+async function authSubmit(){
+  const es = state.lang==='es';
+  const email    = (document.getElementById('authEmailInput')?.value||'').trim();
+  const password = document.getElementById('authPasswordInput')?.value||'';
+  if(!email||!email.includes('@')){ setAuthStatus(es?'Ingresa un correo válido.':'Enter a valid email.'); return; }
+  if(!password||password.length<6){ setAuthStatus(es?'La contraseña necesita al menos 6 caracteres.':'Password must be at least 6 characters.'); return; }
+  const btn = document.getElementById('authSubmitBtn');
+  if(btn){ btn.disabled=true; btn.textContent='⏳ ...'; }
   try{
-    const {error} = await sb.auth.signInWithOtp({
-      email,
-      options: {
-        shouldCreateUser: true,
-        // Point the magic-link in the email at the real app URL, not localhost
-        emailRedirectTo: 'https://dztkg7zjbr-ui.github.io/contafacil/'
-      }
-    });
-    if(error) throw error;
-    document.getElementById('authEmailDisplay').textContent = email;
-    showAuthStep(2);
-    clearAuthStatus();
-    // Focus first OTP box
-    setTimeout(()=>{ const inp=document.getElementById('otpSingle'); if(inp){ inp.value=''; inp.focus(); } }, 150);
-    if(resend) setAuthStatus('✅ Código reenviado.', false);
+    if(_authMode==='signup'){
+      const confirm = document.getElementById('authConfirmInput')?.value||'';
+      if(password!==confirm){ setAuthStatus(es?'Las contraseñas no coinciden.':'Passwords do not match.'); return; }
+      const {error} = await sb.auth.signUp({ email, password });
+      if(error) throw error;
+      // If email confirmation is disabled in Supabase, user is signed in immediately via onAuthStateChange.
+      // If enabled, show a message to check their email.
+      setAuthStatus('✅ ' + (es?'Cuenta creada. Si recibes un correo de confirmación, ábrelo primero.':'Account created. Check your email for a confirmation link if you get one.'), false);
+    } else {
+      const {error} = await sb.auth.signInWithPassword({ email, password });
+      if(error) throw error;
+      // onAuthStateChange handles the rest (sync, modal update, toast)
+    }
   } catch(e){
-    setAuthStatus('Error: ' + (e.message || 'No se pudo enviar el código.'));
+    const msg = e.message||'';
+    if(msg.includes('Invalid login credentials')||msg.includes('invalid_credentials')){
+      setAuthStatus(es?'Correo o contraseña incorrectos.':'Incorrect email or password.');
+    } else if(msg.includes('User already registered')){
+      setAuthStatus(es?'Este correo ya tiene cuenta. Inicia sesión.':'Account exists — sign in instead.');
+      setAuthMode('signin');
+    } else if(msg.includes('Email not confirmed')){
+      setAuthStatus(es?'Confirma tu correo antes de entrar.':'Please confirm your email first.');
+    } else {
+      setAuthStatus((es?'Error: ':'Error: ')+(msg||'Unknown error'));
+    }
   } finally {
-    if(btn){ btn.disabled = false; btn.textContent = '📨 Enviar código'; }
+    if(btn){ btn.disabled=false; setAuthMode(_authMode); }
   }
 }
 
+async function sbForgotPassword(){
+  const es = state.lang==='es';
+  const email = (document.getElementById('authEmailInput')?.value||'').trim();
+  if(!email||!email.includes('@')){ setAuthStatus(es?'Ingresa tu correo arriba primero.':'Enter your email above first.'); return; }
+  try{
+    const {error} = await sb.auth.resetPasswordForEmail(email,{
+      redirectTo:'https://dztkg7zjbr-ui.github.io/contafacil/'
+    });
+    if(error) throw error;
+    setAuthStatus('✅ '+(es?'Correo de restablecimiento enviado.':'Password reset email sent.'), false);
+  } catch(e){ setAuthStatus('Error: '+e.message); }
+}
+
+// Stub — no longer used (kept so any lingering reference doesn't crash)
 async function sbVerifyCode(){
   const token = (document.getElementById('otpSingle')?.value||'').trim().replace(/\s/g,'');
-  if(!token){ setAuthStatus('Pega el código del correo. / Paste the code from the email.'); return; }
-  const btn = document.getElementById('authVerifyBtn');
-  if(btn){ btn.disabled=true; btn.textContent='⏳ Verificando...'; }
+  if(!token){ return; }
   try{
-    const {data, error} = await sb.auth.verifyOtp({ email: _sbEmail, token, type: 'email' });
+    const {data, error} = await sb.auth.verifyOtp({ phone: _sbPhone, token, type: 'sms' });
     if(error) throw error;
     sbUser = data.user;
     updateAuthBadge();
