@@ -5596,12 +5596,15 @@ async function sbPull(showToast=false){
 
 async function sbSignOut(){
   if(!sb) return;
-  await sb.auth.signOut();
+  // Clear local state immediately — sign-out must always work even if offline
   sbUser = null;
   sbLastSync = null;
   updateAuthBadge();
+  updateSyncBadge();
   closeModal('mAuth');
   toast('👋 ' + (state.lang==='es' ? 'Sesión cerrada' : 'Signed out'), 'ok', 2000);
+  // Tell the server in the background (non-blocking, failure is fine)
+  try{ await sb.auth.signOut(); } catch(e){}
 }
 
 // OTP input helpers — auto-advance and backspace
