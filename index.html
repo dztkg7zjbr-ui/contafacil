@@ -506,6 +506,8 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
     <div class="sync-badge" id="syncBadge" onclick="syncBadgeClick()" title="Cloud sync">
       <div class="sync-dot off" id="syncDot"></div>
       <span id="syncLabel">☁️ Sign in</span>
+      <button id="syncRefreshBtn" onclick="event.stopPropagation();manualRefresh()" title="Refresh / Actualizar"
+        style="display:none;background:none;border:none;cursor:pointer;padding:0 0 0 4px;font-size:14px;line-height:1;color:inherit;opacity:.7" id="syncRefreshBtn">↻</button>
     </div>
     <div class="lang-toggle">
       <button class="lang-btn active" id="btn-es" onclick="setLang('es')">ES</button>
@@ -3826,16 +3828,28 @@ function syncBadgeClick(){
 function updateSyncBadge(){
   const dot = document.getElementById('syncDot');
   const lbl = document.getElementById('syncLabel');
+  const btn = document.getElementById('syncRefreshBtn');
   if(!dot||!lbl) return;
   const es = state.lang==='es';
   const n  = (state.pages||[]).reduce((a,p)=>a+(p.transactions||p.rows||[]).length,0);
   if(sbUser){
     dot.className='sync-dot connected';
     lbl.textContent = '☁️ '+(es ? n+' mov.' : n+' txn');
+    if(btn) btn.style.display='inline';
   } else {
     dot.className='sync-dot off';
     lbl.textContent = es ? '☁️ Conectar' : '☁️ Sign in';
+    if(btn) btn.style.display='none';
   }
+}
+
+async function manualRefresh(){
+  if(!sb||!sbUser) return;
+  const btn = document.getElementById('syncRefreshBtn');
+  const es  = state.lang==='es';
+  if(btn){ btn.style.animation='spin .7s linear infinite'; btn.style.display='inline'; }
+  await sbPull(true);
+  if(btn){ btn.style.animation=''; }
 }
 
 // ── Sync modal ──
