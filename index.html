@@ -567,14 +567,23 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
           </div>
           <div class="fg">
             <label class="form-label">Contraseña / Password</label>
-            <input type="password" id="authPasswordInput" class="form-control" placeholder="••••••••"
-                   autocomplete="current-password"
-                   onkeydown="if(event.key==='Enter')authSubmit()">
+            <div style="position:relative">
+              <input type="password" id="authPasswordInput" class="form-control" placeholder="••••••••"
+                     autocomplete="current-password" style="padding-right:42px"
+                     onkeydown="if(event.key==='Enter')authSubmit()">
+              <button type="button" onclick="togglePwdVisibility('authPasswordInput','eyeBtn1')" id="eyeBtn1"
+                style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray-400);padding:2px;line-height:1">👁️</button>
+            </div>
           </div>
           <div class="fg" id="authConfirmWrap" style="display:none">
             <label class="form-label">Confirmar / Confirm</label>
-            <input type="password" id="authConfirmInput" class="form-control" placeholder="••••••••"
-                   onkeydown="if(event.key==='Enter')authSubmit()">
+            <div style="position:relative">
+              <input type="password" id="authConfirmInput" class="form-control" placeholder="••••••••"
+                     style="padding-right:42px"
+                     onkeydown="if(event.key==='Enter')authSubmit()">
+              <button type="button" onclick="togglePwdVisibility('authConfirmInput','eyeBtn2')" id="eyeBtn2"
+                style="position:absolute;right:10px;top:50%;transform:translateY(-50%);background:none;border:none;cursor:pointer;font-size:18px;color:var(--gray-400);padding:2px;line-height:1">👁️</button>
+            </div>
           </div>
           <button class="btn btn-primary" style="width:100%;padding:11px;margin-top:4px" onclick="authSubmit()" id="authSubmitBtn">
             Iniciar sesión
@@ -5502,6 +5511,14 @@ function setAuthStatus(msg, isError=true){
   el.textContent = msg;
 }
 function clearAuthStatus(){ setAuthStatus(''); }
+function togglePwdVisibility(inputId, btnId){
+  const input = document.getElementById(inputId);
+  const btn   = document.getElementById(btnId);
+  if(!input) return;
+  const show = input.type === 'password';
+  input.type = show ? 'text' : 'password';
+  if(btn) btn.textContent = show ? '🙈' : '👁️';
+}
 
 // ── Auth mode: 'signin' | 'signup' ──
 let _authMode = 'signin';
