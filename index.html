@@ -664,6 +664,10 @@ select.fc{-webkit-appearance:none;appearance:none;background-image:url("data:ima
   </div>
   <div class="modal-body">
     <div id="csvStep1">
+      <div id="csvAccountPickerWrap" style="margin-bottom:12px;display:none">
+        <label class="form-label" id="csvAccountPickerLbl">Cuenta destino / Target account</label>
+        <select id="csvAccountPicker" class="form-control"></select>
+      </div>
       <p style="font-size:12px;color:var(--gray-500);margin-bottom:10px" id="csvInstructions">Pega el contenido CSV de tu banco aquí:</p>
       <textarea id="csvRawInput" class="form-control" rows="7" style="font-family:monospace;font-size:12px" placeholder="date,description,amount&#10;01/15/2026,Walmart,-45.23&#10;01/16/2026,Paycheck,1200.00"></textarea>
       <div style="display:flex;gap:8px;margin-top:10px">
@@ -1873,8 +1877,8 @@ function renderPageHeader(page){
   const badge = page.type==='credit'?'type-credit':'type-debit';
   const es = state.lang==='es';
   const debitExtra = page.type==='debit' ? `
-      <button class="btn btn-ghost btn-sm" onclick="toggleReconcileMode('${page.id}')">${_reconcilePageId===page.id?(es?'⚖️ Salir':'⚖️ Exit'):(es?'⚖️ Conciliar':'⚖️ Reconcile')}</button>
-      <button class="btn btn-ghost btn-sm" onclick="openCsvImport('${page.id}')">📥 ${es?'Importar CSV':'Import CSV'}</button>` : '';
+      <button class="btn btn-ghost btn-sm" onclick="toggleReconcileMode('${page.id}')">${_reconcilePageId===page.id?(es?'⚖️ Salir':'⚖️ Exit'):(es?'⚖️ Conciliar':'⚖️ Reconcile')}</button>` : '';
+  const csvBtn = `<button class="btn btn-ghost btn-sm" onclick="openCsvImport('${page.id}')">📥 ${es?'Importar CSV':'Import CSV'}</button>`;
   return `<div class="page-header">
     <input class="page-title-input" value="${esc(page.name)}" onchange="renamePage('${page.id}',this.value)" title="Haz clic para renombrar">
     <span class="type-badge ${badge}">${type}</span>
@@ -1884,6 +1888,7 @@ function renderPageHeader(page){
       <button class="btn btn-outline btn-sm" onclick="openStatement('${page.id}')">${t('compareStmt')}</button>
       <button class="btn btn-outline btn-sm" onclick="openRecurringModal('${page.id}')">⟳ ${es?'Recurrentes':'Recurring'}</button>
       <button class="btn btn-outline btn-sm" onclick="exportCSV('${page.id}')">${t('exportCSV')}</button>
+      ${csvBtn}
       ${debitExtra}
     </div>
   </div>`;
@@ -6123,14 +6128,23 @@ let _csvPageId = null;
 let _csvParsed = [];
 
 function openCsvImport(pageId){
-  _csvPageId = pageId;
+  _csvPageId = pageId || null;
   const es = state.lang==='es';
-  const p = state.pages.find(x=>x.id===pageId);
+  const p = pageId ? state.pages.find(x=>x.id===pageId) : null;
   document.getElementById('mCsvTitle').textContent = '📥 '+(es?'Importar CSV':'Import CSV')+(p?' — '+p.name:'');
   document.getElementById('csvInstructions').textContent = es ? 'Pega el CSV de tu banco (con encabezados):' : 'Paste your bank CSV (with headers):';
   document.getElementById('csvRawInput').value='';
   document.getElementById('csvStep1').style.display='block';
   document.getElementById('csvStep2').style.display='none';
+  // Show account picker only when no account was pre-selected
+  const pickerWrap = document.getElementById('csvAccountPickerWrap');
+  const picker = document.getElementById('csvAccountPicker');
+  if(!pageId && state.pages && state.pages.length){
+    picker.innerHTML = state.pages.map(pg=>`<option value="${pg.id}">${esc(pg.name)}</option>`).join('');
+    pickerWrap.style.display='block';
+  } else {
+    pickerWrap.style.display='none';
+  }
   openModal('mCsvImport');
 }
 
@@ -6224,7 +6238,9 @@ function refreshCsvPreview(){
 
 function importCsvRows(){
   const es=state.lang==='es';
-  const p=state.pages.find(x=>x.id===_csvPageId);if(!p)return;
+  const resolvedId = _csvPageId || (document.getElementById('csvAccountPicker')?.value);
+  const p=state.pages.find(x=>x.id===resolvedId);
+  if(!p){toast(es?'Selecciona una cuenta primero.':'Select an account first.','warn',2500);return;}
   let imported=0;
   for(const row of _csvParsed){
     const date=_csvColVal(row,'csv_date')||'';
